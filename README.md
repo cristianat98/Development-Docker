@@ -21,6 +21,25 @@ container start — so you can `docker exec` straight into a ready-to-work shell
 docker build -t dev-image:base ./base
 ```
 
+## Releases
+
+Versioning is automated by [semantic-release](https://semantic-release.gitbook.io/)
+based on [Conventional Commits](https://www.conventionalcommits.org/) — write
+commit messages on `master` as `feat: ...`, `fix: ...`, `feat!: ...` /
+`BREAKING CHANGE: ...`, etc., and the next semver bump (major/minor/patch) is
+inferred automatically; commits that don't match any recognized type don't
+trigger a release.
+
+On every push to `master`, `.github/workflows/release.yml`:
+1. Runs semantic-release, which tags the commit, publishes a GitHub release
+   with generated notes, and decides whether a new version is warranted
+2. If a new version was published, builds `base/Dockerfile` and pushes
+   `cristianat/development:<version>` and `cristianat/development:latest` to
+   Docker Hub
+
+Requires the `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` repository secrets
+(a Docker Hub access token, not your account password).
+
 ## Configure
 
 Container setup is driven by two files that you copy from the tracked `*.example.*`
