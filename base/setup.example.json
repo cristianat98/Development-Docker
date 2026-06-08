@@ -1,0 +1,73 @@
+{
+  "_comment": "Copy this file to setup.json and fill in your values. setup.json is gitignored; this file is tracked.",
+  "git": {
+    "_comment": "All fields are optional. Omit the section entirely if you don't need Git identity in the container.",
+    "name": "Your Name",
+    "email": "you@example.com",
+    "_gpg_key_comment": "Passphrase-less signing key expected (the entrypoint runs gpg --batch --import non-interactively). Generate one with: gpg --batch --passphrase '' --quick-generate-key \"Your Name <you@example.com>\" ed25519 sign 0 — then export it with: gpg --export-secret-keys --armor <KEYID> > ./entrypoint/id_signing.asc  (drop the .asc into the entrypoint/ dir; gpg_key is resolved against it the same way as claude.global_md). signing_key_id is the long key ID / fingerprint from: gpg --list-secret-keys --keyid-format=long",
+    "gpg_key": "id_signing.asc",
+    "signing_key_id": "YOUR_KEY_ID",
+    "_ssh_keys_comment": "Generate a key pair with: ssh-keygen -t ed25519 -C \"you@example.com\" -f ./entrypoint/id_ed25519_github  (then drop the private key file into the entrypoint/ dir referenced by ssh_file below; .gitignore already excludes id_ed25519*/id_rsa*/id_ecdsa* there).",
+    "ssh_keys": [
+      {
+        "_comment": "ssh_file is resolved against the mounted files directory, same as claude.global_md. host is written as a Host block in ~/.ssh/config.",
+        "ssh_file": "id_ed25519_github",
+        "host": "github.com"
+      }
+    ]
+  },
+  "scripts": {
+    "_comment": "Optional. dir is resolved against the mounted files directory, same as claude.global_md. Every *.sh file directly inside it runs at container start, in sorted filename order — prefix names with 00-, 01-, etc. to control ordering. Executable files run directly; non-executable files run via bash.",
+    "dir": "scripts"
+  },
+  "claude": {
+    "_comment": "All arrays are optional. Empty arrays or absent keys are silently skipped.",
+    "global_md": "CLAUDE.example.md",
+    "_skills_dir_comment": "Optional. Resolved against the mounted files directory, same as global_md. Every immediate subdirectory inside it is installed as a skill at ~/.claude/skills/<name> (e.g. claude-skills/3gpp-expert/SKILL.md -> ~/.claude/skills/3gpp-expert/SKILL.md).",
+    "skills_dir": "claude-skills",
+    "context7": true,
+    "rtk": true,
+    "notebooklm": true,
+    "http_mcps": [
+      {
+        "_comment": "HTTP MCP: name and url are required.",
+        "name": "notion",
+        "url": "https://mcp.notion.com/mcp"
+      },
+      {
+        "name": "atlassian",
+        "url": "https://mcp.atlassian.com/v1/mcp"
+      }
+    ],
+    "stdio_mcps": [
+      {
+        "_comment": "Stdio MCP: command is the full shell command string, split at runtime.",
+        "name": "m365",
+        "command": "npx -y @softeria/ms-365-mcp-server --toon"
+      }
+    ],
+    "plugins": [
+      {
+        "_comment": "marketplace_id is the Marketplace path; plugin_id is the install name.",
+        "marketplace_id": "EveryInc/compound-engineering-plugin",
+        "plugin_id": "compound-engineering"
+      }
+    ]
+  },
+  "copilot": {
+    "_comment": "Same structure as claude. Copilot plugin install uses plugin_id@marketplace_id compound form.",
+    "_skills_dir_comment": "Optional. Resolved against the mounted files directory, same as claude.global_md. Every immediate subdirectory inside it is installed as a skill at ~/.copilot/skills/<name>.",
+    "skills_dir": "copilot-skills",
+    "context7": true,
+    "rtk": true,
+    "notebooklm": true,
+    "http_mcps": [
+      {
+        "name": "atlassian",
+        "url": "https://mcp.atlassian.com/v1/mcp"
+      }
+    ],
+    "stdio_mcps": [],
+    "plugins": []
+  }
+}

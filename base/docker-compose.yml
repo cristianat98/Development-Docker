@@ -1,0 +1,31 @@
+services:
+  dev:
+    build: .
+    image: dev-image:base
+    env_file:
+      - .env
+    environment:
+      # Points the entrypoint's `docker login` (and any Docker CLI usage inside
+      # the container) at the bundled Docker-in-Docker daemon below. Override
+      # or remove this in your .env if you'd rather use the host's Docker socket.
+      DOCKER_HOST: tcp://docker-daemon:2375
+    volumes:
+      - ./setup.json:/entrypoint/setup.json:ro
+      - ./entrypoint:/entrypoint/files:ro
+    depends_on:
+      - docker-daemon
+    command: ["sleep", "infinity"]
+
+  # Example Docker-in-Docker daemon the dev container can build/run images
+  # against without mounting the host's Docker socket. Reachable from the
+  # `dev` service as `docker-daemon` (the hostname used in DOCKER_HOST above).
+  docker-daemon:
+    image: docker:dind
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    volumes:
+      - docker-daemon-data:/var/lib/docker
+
+volumes:
+  docker-daemon-data:
