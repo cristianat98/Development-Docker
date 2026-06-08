@@ -213,30 +213,6 @@ CMD ["sleep", "infinity"]
 # Login in Notion
 # Login in Atlassian
 # Login in Microsoft
-# Solve ctx7 issue
 # Add SSH/GPG keys to Git
 # Login in GitHub Copilot CLI: copilot auth login
 # Login in Claude CLI: claude auth login
-
-# Checks
-# Check python && pip: python3 --version && pip3 --version && python3.14 --version && pip3.14 --version
-# Check node && npm: node --version && npm --version
-# Check golang: go version
-# Check java: java -version && javac -version
-# Check git: git --version
-# Check pre-commit && go-pre-commit: pre-commit --version && go-pre-commit --version
-# Check docker: docker --version
-# Check terraform && tflint: terraform version && tflint --version
-# Check gcloud: gcloud --version
-# Check aws: aws --version
-# Check ansible && ansible-lint: ansible --version && ansible-lint --version
-# Check kubectl: kubectl version
-# Check mongosh: mongosh --version
-# Check psql: psql --version
-# Check act: act --version
-# Check gh: gh --version
-# Check bb: bb --version
-# Check sonar-scanner: sonar-scanner --version
-# Check GitHub Copilot CLI: copilot --version
-# Check Claude CLI: claude --version
-# Check RTK: read root/.github/copilot-instructions.md && read root/.claude/CLAUDE.md

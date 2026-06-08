@@ -1,0 +1,36 @@
+# Example Compose setup for the `base` development image, demonstrating a
+# Docker-in-Docker daemon as the container's Docker host. Run from this
+# directory with your own `.env`, `setup.json` and `entrypoint/` files copied
+# alongside this file (see ../base/README.md for the templates to copy from).
+
+services:
+  dev:
+    image: cristianat/development:latest
+    env_file:
+      - .env
+    volumes:
+      - ./setup.json:/entrypoint/setup.json:ro
+      - ./entrypoint:/entrypoint/files:ro
+    depends_on:
+      - docker-daemon
+
+  # Example Docker-in-Docker daemon the dev container can build/run images
+  # against without mounting the host's Docker socket. Reachable from the
+  # `dev` service as `docker-daemon` — point DOCKER_HOST at
+  # tcp://docker-daemon:2375 in your .env to use it.
+  docker-daemon:
+    image: docker:dind
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    volumes:
+      - docker-daemon-data:/var/lib/docker
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+
+volumes:
+  docker-daemon-data:
