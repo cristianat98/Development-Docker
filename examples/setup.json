@@ -1,0 +1,16 @@
+{
+  "scripts": {
+    "dir": "scripts"
+  },
+  "claude": {
+    "context7": false,
+    "rtk": true,
+    "plugins": [
+      {
+        "_comment": "marketplace_id is the Marketplace path; plugin_id is the install name.",
+        "marketplace_id": "EveryInc/compound-engineering-plugin",
+        "plugin_id": "compound-engineering"
+      }
+    ]
+  }
+}

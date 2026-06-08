@@ -1,0 +1,60 @@
+{
+  "git": {
+    "name": "Your Name",
+    "email": "you@example.com",
+    "gpg_key": "id_signing.asc",
+    "signing_key_id": "YOUR_KEY_ID",
+    "ssh_keys": [
+      {
+        "ssh_file": "id_ed25519_github",
+        "host": "github.com"
+      }
+    ]
+  },
+  "scripts": {
+    "dir": "scripts"
+  },
+  "claude": {
+    "global_md": "CLAUDE.example.md",
+    "skills_dir": "claude-skills",
+    "context7": true,
+    "rtk": true,
+    "notebooklm": true,
+    "http_mcps": [
+      {
+        "name": "notion",
+        "url": "https://mcp.notion.com/mcp"
+      },
+      {
+        "name": "atlassian",
+        "url": "https://mcp.atlassian.com/v1/mcp"
+      }
+    ],
+    "stdio_mcps": [
+      {
+        "name": "m365",
+        "command": "npx -y @softeria/ms-365-mcp-server --toon"
+      }
+    ],
+    "plugins": [
+      {
+        "marketplace_id": "EveryInc/compound-engineering-plugin",
+        "plugin_id": "compound-engineering"
+      }
+    ]
+  },
+  "copilot": {
+    "skills_dir": "copilot-skills",
+    "context7": true,
+    "rtk": true,
+    "notebooklm": true,
+    "http_mcps": [
+      {
+        "name": "atlassian",
+        "url": "https://mcp.atlassian.com/v1/mcp"
+      }
+    ],
+    "stdio_mcps": [],
+    "plugins": []
+  }
+}

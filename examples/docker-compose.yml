@@ -1,0 +1,71 @@
+# Example Compose setup for the `base` development image: a Docker-in-Docker
+# daemon as the container's Docker host, plus MongoDB and PostgreSQL
+# instances to exercise the bundled `mongosh`/`psql` clients against. Run
+# from this directory with your own `.env`, `setup.json` and `entrypoint/`
+# files copied alongside this file (see ../README.md for the templates to
+# copy from).
+
+services:
+  dev:
+    image: dev-image:base
+    env_file:
+      - .env
+    volumes:
+      - ./setup.json:/entrypoint/setup.json:ro
+      - ./entrypoint:/entrypoint/files:ro
+
+  # Example Docker-in-Docker daemon the dev container can build/run images
+  # against without mounting the host's Docker socket. Reachable from the
+  # `dev` service as `docker-daemon` — point DOCKER_HOST at
+  # tcp://docker-daemon:2375 in your .env to use it.
+  docker-daemon:
+    image: docker:dind
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    volumes:
+      - docker-daemon-data:/var/lib/docker
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+
+  # Example MongoDB instance, reachable from `dev` as `mongo:27017` —
+  # try it with the bundled `mongosh` client.
+  mongo:
+    image: mongo:7
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:-example}
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # Example PostgreSQL instance, reachable from `dev` as `postgres:5432` —
+  # try it with the bundled `psql` client.
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  docker-daemon-data:
+  mongo-data:
+  postgres-data:

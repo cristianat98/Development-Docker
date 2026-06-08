@@ -1,0 +1,9 @@
+# Local copies of the tracked *.example.* templates — keep secrets out of git
+.env
+setup.json
+
+# Personal SSH/GPG keys dropped into entrypoint/ for setup.json to reference
+**/entrypoint/id_ed25519*
+**/entrypoint/id_rsa*
+**/entrypoint/id_ecdsa*
+**/entrypoint/*.asc
