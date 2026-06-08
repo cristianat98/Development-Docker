@@ -68,9 +68,12 @@ elsewhere.
 `examples/docker-compose.yml` is a ready-to-run setup: it pulls the published
 `cristianat/development:latest` image, mounts `setup.json` and the
 `entrypoint/` files directory at the expected paths, loads `.env`, and starts
-a `docker:dind` sidecar (`docker-daemon`) — no host Docker socket required.
-Set `DOCKER_HOST=tcp://docker-daemon:2375` in your `.env` so the container's
-Docker CLI talks to that sidecar:
+a `docker:dind` sidecar (`docker-daemon`) plus MongoDB and PostgreSQL
+instances — so the bundled `docker`, `mongosh` and `psql` clients all have
+something to talk to without touching the host. No host Docker socket
+required: set `DOCKER_HOST=tcp://docker-daemon:2375` in your `.env` so the
+container's Docker CLI talks to the sidecar (reach the databases as
+`mongo:27017` / `postgres:5432`):
 
 ```bash
 cd examples
