@@ -13,10 +13,6 @@ services:
     volumes:
       - ./setup.json:/entrypoint/setup.json:ro
       - ./entrypoint:/entrypoint/files:ro
-    depends_on:
-      - docker-daemon
-      - mongo
-      - postgres
 
   # Example Docker-in-Docker daemon the dev container can build/run images
   # against without mounting the host's Docker socket. Reachable from the
