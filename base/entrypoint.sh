@@ -203,10 +203,12 @@ claude_setup() {
     count=$(jq '.claude.stdio_mcps // [] | length' "$config_file")
     for i in $(seq 0 $((count - 1))); do
         local name command
+        local -a command_args
         name=$(jq -r ".claude.stdio_mcps[$i].name" "$config_file")
         command=$(jq -r ".claude.stdio_mcps[$i].command" "$config_file")
+        read -ra command_args <<<"$command"
         log "Adding Claude stdio MCP: $name"
-        eval "claude mcp add --scope user --transport stdio $name -- $command"
+        claude mcp add --scope user --transport stdio "$name" -- "${command_args[@]}"
     done
 
     # plugins
@@ -310,10 +312,12 @@ copilot_setup() {
     count=$(jq '.copilot.stdio_mcps // [] | length' "$config_file")
     for i in $(seq 0 $((count - 1))); do
         local name command
+        local -a command_args
         name=$(jq -r ".copilot.stdio_mcps[$i].name" "$config_file")
         command=$(jq -r ".copilot.stdio_mcps[$i].command" "$config_file")
+        read -ra command_args <<<"$command"
         log "Adding Copilot stdio MCP: $name"
-        eval "copilot mcp add --transport stdio $name -- $command"
+        copilot mcp add --transport stdio "$name" -- "${command_args[@]}"
     done
 
     # plugins
