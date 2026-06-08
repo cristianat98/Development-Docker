@@ -56,6 +56,54 @@ skill directories, custom scripts) by path. These are resolved relative to the
 copies of those files there (`entrypoint/CLAUDE.example.md` shows the expected
 shape for a global `CLAUDE.md`).
 
+### `setup.json` field reference
+
+`setup.example.json` is the tracked, comment-free template — copy it to
+`setup.json` (gitignored) and fill in only the sections you need; omitted
+sections, empty arrays and absent keys are silently skipped.
+
+- **`git`** — all fields optional.
+  - `name` / `email` → `git config --global user.name`/`user.email`
+  - `gpg_key` / `signing_key_id` — configure commit signing. Requires a
+    **passphrase-less** signing key, since the entrypoint runs
+    `gpg --batch --import` non-interactively:
+    ```bash
+    gpg --batch --passphrase '' --quick-generate-key "Your Name <you@example.com>" ed25519 sign 0
+    gpg --export-secret-keys --armor <KEYID> > ./entrypoint/id_signing.asc
+    ```
+    Drop the exported file into `entrypoint/` — `gpg_key` resolves against the
+    files directory the same way as `claude.global_md`. `signing_key_id` is
+    the long key ID/fingerprint from `gpg --list-secret-keys --keyid-format=long`.
+  - `ssh_keys` — array of `{ ssh_file, host }`. Generate a key pair with:
+    ```bash
+    ssh-keygen -t ed25519 -C "you@example.com" -f ./entrypoint/id_ed25519_github
+    ```
+    then drop the **private** key into `entrypoint/` (`.gitignore` already
+    excludes `id_ed25519*`/`id_rsa*`/`id_ecdsa*` there). `ssh_file` resolves
+    against the files directory; `host` is written as a `Host` block in
+    `~/.ssh/config`.
+
+- **`scripts.dir`** — resolved against the files directory. Every `*.sh` file
+  directly inside it runs at container start, in sorted filename order
+  (prefix with `00-`, `01-`, … to control ordering). Executable files run
+  directly; non-executable files run via `bash`.
+
+- **`claude`** / **`copilot`** — same shape for both agents:
+  - `global_md` — global instructions file, resolved against the files
+    directory and installed as `~/.claude/CLAUDE.md` (Claude only;
+    `entrypoint/CLAUDE.example.md` shows the expected shape)
+  - `skills_dir` — resolved against the files directory; every immediate
+    subdirectory is installed as a skill, e.g.
+    `claude-skills/3gpp-expert/SKILL.md` → `~/.claude/skills/3gpp-expert/SKILL.md`
+    (or `~/.copilot/skills/...` for Copilot)
+  - `context7` / `rtk` / `notebooklm` — booleans toggling each integration
+    (Context7 additionally requires `CONTEXT7_API_KEY` in `.env`)
+  - `http_mcps` — array of `{ name, url }` HTTP MCP servers
+  - `stdio_mcps` — array of `{ name, command }`, where `command` is the full
+    shell command string, split at runtime
+  - `plugins` — array of `{ marketplace_id, plugin_id }`; Copilot installs
+    using the compound `plugin_id@marketplace_id` form
+
 By default the entrypoint looks for the config at `/entrypoint/setup.json` and
 the files directory at `/entrypoint/files`; override these with the
 `SETUP_CONFIG` / `SETUP_FILES_DIR` environment variables if you mount them
