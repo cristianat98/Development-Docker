@@ -178,21 +178,6 @@ RUN curl -fsSL https://gh.io/copilot-install | bash
 RUN curl -fsSL https://claude.ai/install.sh | bash
 
 # -----------------------------
-# NotebookLM CLI
-# -----------------------------
-RUN pipx install --force notebooklm-mcp-cli
-
-# -----------------------------
-# Context7 CLI
-# -----------------------------
-RUN npm install -g ctx7
-
-# -----------------------------
-# RTK
-# -----------------------------
-RUN curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh
-
-# -----------------------------
 # Clean up
 # -----------------------------
 RUN apt clean && rm -rf /var/lib/apt/lists/*
