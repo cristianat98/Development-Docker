@@ -17,9 +17,6 @@
   "claude": {
     "global_md": "CLAUDE.example.md",
     "skills_dir": "claude-skills",
-    "context7": true,
-    "rtk": true,
-    "notebooklm": true,
     "http_mcps": [
       {
         "name": "notion",
@@ -45,9 +42,6 @@
   },
   "copilot": {
     "skills_dir": "copilot-skills",
-    "context7": true,
-    "rtk": true,
-    "notebooklm": true,
     "http_mcps": [
       {
         "name": "atlassian",

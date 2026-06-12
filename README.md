@@ -13,7 +13,7 @@ container start — so you can `docker exec` straight into a ready-to-work shell
 - **VCS & collaboration**: Git (latest via PPA), GitHub CLI (`gh`), Bitbucket CLI (`bb`), pre-commit + go-pre-commit
 - **Databases**: MongoDB Shell (`mongosh`), PostgreSQL client (`psql`)
 - **CI & code quality**: `act` (run GitHub Actions locally), SonarQube Scanner CLI
-- **AI agent tooling**: GitHub Copilot CLI, Claude CLI, NotebookLM CLI, Context7 CLI, RTK
+- **AI agent tooling**: GitHub Copilot CLI, Claude CLI
 
 ## Build
 
@@ -48,7 +48,7 @@ templates and fill in (both are gitignored so your secrets stay local):
 | Template | Copy to | Purpose |
 | --- | --- | --- |
 | `base/.example.env` | `.env` | Secrets and tokens passed as environment variables (GitHub, Context7, Bitbucket, Docker registry, GCloud, AWS, plus the paths described below) |
-| `base/setup.example.json` | `setup.json` | Git identity/signing/SSH keys, Claude/Copilot integrations (skills, MCP servers, plugins, RTK, Context7, NotebookLM), custom startup scripts |
+| `base/setup.example.json` | `setup.json` | Git identity/signing/SSH keys, Claude/Copilot integrations (skills, MCP servers, plugins), custom startup scripts |
 
 `setup.json` references additional files (SSH/GPG keys, a global `CLAUDE.md`,
 skill directories, custom scripts) by path. These are resolved relative to the
@@ -86,7 +86,9 @@ sections, empty arrays and absent keys are silently skipped.
 - **`scripts.dir`** — resolved against the files directory. Every `*.sh` file
   directly inside it runs at container start, in sorted filename order
   (prefix with `00-`, `01-`, … to control ordering). Executable files run
-  directly; non-executable files run via `bash`.
+  directly; non-executable files run via `bash`. Runs before the Claude/Copilot
+  setup below, so a script here can install CLIs (e.g. `rtk`,
+  `notebooklm-mcp-cli`) that those steps detect and configure automatically.
 
 - **`claude`** / **`copilot`** — same shape for both agents:
   - `global_md` — global instructions file, resolved against the files
@@ -96,8 +98,6 @@ sections, empty arrays and absent keys are silently skipped.
     subdirectory is installed as a skill, e.g.
     `claude-skills/3gpp-expert/SKILL.md` → `~/.claude/skills/3gpp-expert/SKILL.md`
     (or `~/.copilot/skills/...` for Copilot)
-  - `context7` / `rtk` / `notebooklm` — booleans toggling each integration
-    (Context7 additionally requires `CONTEXT7_API_KEY` in `.env`)
   - `http_mcps` — array of `{ name, url }` HTTP MCP servers
   - `stdio_mcps` — array of `{ name, command }`, where `command` is the full
     shell command string, split at runtime
@@ -156,19 +156,22 @@ are missing, before finally `exec`ing the container's `CMD`:
 2. **Git setup** — sets `user.name`/`user.email`, imports a passphrase-less GPG
    signing key and configures commit signing, and installs SSH keys/host blocks
    from `setup.json`
-3. **Claude CLI setup** — installs the global `CLAUDE.md`, skill directories,
-   RTK, NotebookLM, HTTP/stdio MCP servers, plugins and Context7 (when
-   `CONTEXT7_API_KEY` is set)
-4. **Copilot CLI setup** — same categories as Claude, adapted for `copilot`
-5. **Bitbucket CLI** — creates the default profile from `BITBUCKET_USER`/`BITBUCKET_PASSWORD`
-6. **Docker registry login** — waits for the Docker daemon, then logs in with
+3. **Custom scripts** — runs every `*.sh` file in the directory pointed to by
+   `scripts.dir` in `setup.json`, in sorted filename order. Runs before the
+   Claude/Copilot setup below, so a script here can install CLIs (e.g. RTK,
+   NotebookLM CLI) that those steps detect and configure
+4. **Claude CLI setup** — installs the global `CLAUDE.md`, skill directories,
+   HTTP/stdio MCP servers and plugins from `setup.json`; also initialises RTK
+   (if `rtk` is on `PATH`), configures NotebookLM (if its CLI is installed)
+   and registers the Context7 MCP server (if `CONTEXT7_API_KEY` is set)
+5. **Copilot CLI setup** — same categories as Claude, adapted for `copilot`
+6. **Bitbucket CLI** — creates the default profile from `BITBUCKET_USER`/`BITBUCKET_PASSWORD`
+7. **Docker registry login** — waits for the Docker daemon, then logs in with
    `DOCKER_USERNAME`/`DOCKER_PASSWORD` (optionally against `DOCKER_REGISTRY`)
-7. **Google Cloud setup** — decodes `GCLOUD_SERVICE_ACCOUNT_KEY_B64`, activates
+8. **Google Cloud setup** — decodes `GCLOUD_SERVICE_ACCOUNT_KEY_B64`, activates
    the service account and optionally selects `GCLOUD_PROJECT_ID`
-8. **AWS CLI setup** — configures a named profile from `AWS_ACCESS_KEY_ID` /
+9. **AWS CLI setup** — configures a named profile from `AWS_ACCESS_KEY_ID` /
    `AWS_SECRET_ACCESS_KEY` (and optional session token / region)
-9. **Custom scripts** — runs every `*.sh` file in the directory pointed to by
-   `scripts.dir` in `setup.json`, in sorted filename order
 
 ## Manual post-setup
 
