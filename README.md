@@ -52,9 +52,9 @@ templates and fill in (both are gitignored so your secrets stay local):
 
 `setup.json` references additional files (SSH/GPG keys, a global `CLAUDE.md`,
 skill directories, custom scripts) by path. These are resolved relative to the
-**files directory**, which mirrors `base/entrypoint/` in this repo — drop your
-own copies of those files there (`base/entrypoint/CLAUDE.example.md` shows the
-expected shape for a global `CLAUDE.md`).
+**files directory**, which is `examples/entrypoint/` in this repo — drop your
+own copies of those files there (`examples/entrypoint/CLAUDE.example.md` shows
+the expected shape for a global `CLAUDE.md`).
 
 ### `setup.json` field reference
 
@@ -69,16 +69,16 @@ sections, empty arrays and absent keys are silently skipped.
     `gpg --batch --import` non-interactively:
     ```bash
     gpg --batch --passphrase '' --quick-generate-key "Your Name <you@example.com>" ed25519 sign 0
-    gpg --export-secret-keys --armor <KEYID> > ./base/entrypoint/id_signing.asc
+    gpg --export-secret-keys --armor <KEYID> > ./examples/entrypoint/id_signing.asc
     ```
-    Drop the exported file into `base/entrypoint/` — `gpg_key` resolves against
+    Drop the exported file into `examples/entrypoint/` — `gpg_key` resolves against
     the files directory the same way as `claude.global_md`. `signing_key_id` is
     the long key ID/fingerprint from `gpg --list-secret-keys --keyid-format=long`.
   - `ssh_keys` — array of `{ ssh_file, host }`. Generate a key pair with:
     ```bash
-    ssh-keygen -t ed25519 -C "you@example.com" -f ./base/entrypoint/id_ed25519_github
+    ssh-keygen -t ed25519 -C "you@example.com" -f ./examples/entrypoint/id_ed25519_github
     ```
-    then drop the **private** key into `base/entrypoint/` (`.gitignore` already
+    then drop the **private** key into `examples/entrypoint/` (`.gitignore` already
     excludes `id_ed25519*`/`id_rsa*`/`id_ecdsa*` there). `ssh_file` resolves
     against the files directory; `host` is written as a `Host` block in
     `~/.ssh/config`.
@@ -93,7 +93,7 @@ sections, empty arrays and absent keys are silently skipped.
 - **`claude`** / **`copilot`** — same shape for both agents:
   - `global_md` — global instructions file, resolved against the files
     directory and installed as `~/.claude/CLAUDE.md` (Claude only;
-    `base/entrypoint/CLAUDE.example.md` shows the expected shape)
+    `examples/entrypoint/CLAUDE.example.md` shows the expected shape)
   - `skills_dir` — resolved against the files directory; every immediate
     subdirectory is installed as a skill, e.g.
     `claude-skills/3gpp-expert/SKILL.md` → `~/.claude/skills/3gpp-expert/SKILL.md`

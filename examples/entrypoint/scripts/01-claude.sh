@@ -7,6 +7,7 @@ printf 'n\n' | rtk init -g --auto-patch
 # NLM
 pipx install --force notebooklm-mcp-cli
 /root/.local/bin/nlm setup add claude-code
+echo "Login in NotebookLM CLI: nlm login"
 
 # CTX7
 npm install -g ctx7
@@ -30,3 +31,8 @@ mkdir -p ~/.claude/skills/3gpp-expert
 mv SKILL.md references ~/.claude/skills/3gpp-expert/
 cd ..
 rm -rf 3gpp
+
+echo "Login in Claude CLI"
+echo "Login in Notion"
+echo "Login in Atlassian"
+echo "Login in Microsoft"

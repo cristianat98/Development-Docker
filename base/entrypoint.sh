@@ -419,8 +419,6 @@ github_login
 
 git_setup
 
-custom_scripts_setup
-
 claude_setup
 
 copilot_setup
@@ -432,5 +430,7 @@ docker_login
 gcloud_setup
 
 aws_setup
+
+custom_scripts_setup
 
 exec "$@"

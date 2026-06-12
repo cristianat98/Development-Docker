@@ -192,12 +192,3 @@ COPY entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 # -----------------------------
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["sleep", "infinity"]
-
-# POST STEPS
-# Login in NotebookLM CLI: nlm login
-# Login in Notion
-# Login in Atlassian
-# Login in Microsoft
-# Add SSH/GPG keys to Git
-# Login in GitHub Copilot CLI: copilot auth login
-# Login in Claude CLI: claude auth login
