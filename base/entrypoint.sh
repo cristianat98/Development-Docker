@@ -168,26 +168,6 @@ claude_setup() {
         install_skills "Claude" "${files_dir}/${skills_dir}" /root/.claude/skills
     fi
 
-    # rtk
-    if [[ "$(jq -r '.claude.rtk // false' "$config_file")" == "true" ]]; then
-        if command -v rtk >/dev/null 2>&1; then
-            log "Initialising RTK for Claude CLI..."
-            printf 'n\n' | rtk init -g --auto-patch
-        else
-            log "Skipping RTK for Claude: rtk is not installed."
-        fi
-    fi
-
-    # notebooklm
-    if [[ "$(jq -r '.claude.notebooklm // false' "$config_file")" == "true" ]]; then
-        if [[ -x /root/.local/bin/nlm ]]; then
-            log "Configuring NotebookLM for Claude CLI..."
-            /root/.local/bin/nlm setup add claude-code
-        else
-            log "Skipping NotebookLM for Claude: nlm is not installed."
-        fi
-    fi
-
     # http mcps
     local count
     count=$(jq '.claude.http_mcps // [] | length' "$config_file")
@@ -222,21 +202,6 @@ claude_setup() {
         claude plugin install --scope user "$plugin_id"
     done
 
-    # context7 (MCP, mirroring the Copilot setup — `npx ctx7 setup --claude ...`
-    # hangs non-interactively from the entrypoint, see git history for analysis)
-    local context7_enabled="${CONTEXT7_API_KEY:-}"
-    if [[ "$(jq -r '.claude.context7 // false' "$config_file")" == "true" ]]; then
-        if [[ -z "$context7_enabled" ]]; then
-            log "Skipping Context7 for Claude: CONTEXT7_API_KEY is not set."
-        else
-            log "Configuring Context7 MCP for Claude CLI..."
-            claude mcp add --scope user --transport http \
-                context7 \
-                https://mcp.context7.com/mcp \
-                -H "CONTEXT7_API_KEY: ${context7_enabled}"
-        fi
-    fi
-
     log "Claude setup completed."
 }
 
@@ -259,42 +224,6 @@ copilot_setup() {
     skills_dir=$(jq -r '.copilot.skills_dir // empty' "$config_file")
     if [[ -n "$skills_dir" ]]; then
         install_skills "Copilot" "${files_dir}/${skills_dir}" /root/.copilot/skills
-    fi
-
-    # context7
-    local api_key="${CONTEXT7_API_KEY:-}"
-    if [[ "$(jq -r '.copilot.context7 // false' "$config_file")" == "true" ]]; then
-        if [[ -z "$api_key" ]]; then
-            log "Skipping Context7 for Copilot: CONTEXT7_API_KEY is not set."
-        else
-            log "Configuring Context7 MCP for GitHub Copilot CLI..."
-            copilot mcp add \
-                --transport http \
-                --tools query-docs,resolve-library-id \
-                --header "CONTEXT7_API_KEY: ${api_key}" \
-                context7 \
-                https://mcp.context7.com/mcp
-        fi
-    fi
-
-    # rtk
-    if [[ "$(jq -r '.copilot.rtk // false' "$config_file")" == "true" ]]; then
-        if command -v rtk >/dev/null 2>&1; then
-            log "Initialising RTK for GitHub Copilot CLI..."
-            rtk init -g --copilot
-        else
-            log "Skipping RTK for Copilot: rtk is not installed."
-        fi
-    fi
-
-    # notebooklm
-    if [[ "$(jq -r '.copilot.notebooklm // false' "$config_file")" == "true" ]]; then
-        if command -v notebooklm-mcp >/dev/null 2>&1; then
-            log "Configuring NotebookLM MCP for GitHub Copilot CLI..."
-            copilot mcp add --transport stdio notebooklm-mcp -- notebooklm-mcp
-        else
-            log "Skipping NotebookLM for Copilot: notebooklm-mcp is not installed."
-        fi
     fi
 
     # http mcps
