@@ -11,15 +11,12 @@ echo "Login in NotebookLM CLI: nlm login"
 
 # CTX7
 npm install -g ctx7
-local context7_api_key="${CONTEXT7_API_KEY:-}"
-if [[ -n "$context7_api_key" ]]; then
-    npx ctx7 setup --claude --cli --api-key "$context7_api_key" --yes
-    # claude mcp add --scope user --transport http \
-    #     context7 \
-    #     https://mcp.context7.com/mcp \
-    #     -H "CONTEXT7_API_KEY: ${context7_api_key}"
-else
-    log "Skipping Context7 for Claude: CONTEXT7_API_KEY is not set."
+if [[ -n "$CONTEXT7_API_KEY" ]]; then
+    # npx ctx7 setup --claude --cli --api-key "$CONTEXT7_API_KEY" --yes
+    claude mcp add --scope user --transport http \
+        context7 \
+        https://mcp.context7.com/mcp \
+        -H "CONTEXT7_API_KEY: ${CONTEXT7_API_KEY}"
 fi
 
 # Skills
