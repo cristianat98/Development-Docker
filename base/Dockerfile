@@ -22,6 +22,7 @@ RUN apt update && apt upgrade -y && apt install -y --no-install-recommends \
     iputils-ping \
     jq \
     lsb-release \
+    nano \
     net-tools \
     nmap \
     pipx \
@@ -34,6 +35,7 @@ RUN apt update && apt upgrade -y && apt install -y --no-install-recommends \
     telnet \
     traceroute \
     unzip \
+    vim \
     wget
 
 # -----------------------------
