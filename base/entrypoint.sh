@@ -415,22 +415,31 @@ custom_scripts_setup() {
     done < <(find "$dir" -maxdepth 1 -type f -name '*.sh' -print0 | sort -z)
 }
 
-github_login
+INITIALIZED_MARKER="${SETUP_INITIALIZED_MARKER:-/root/.entrypoint_initialized}"
 
-git_setup
+if [[ -f "$INITIALIZED_MARKER" ]]; then
+    log "Container already initialized, skipping setup."
+else
+    github_login
 
-claude_setup
+    git_setup
 
-copilot_setup
+    claude_setup
 
-bitbucket_setup
+    copilot_setup
 
-docker_login
+    bitbucket_setup
 
-gcloud_setup
+    docker_login
 
-aws_setup
+    gcloud_setup
 
-custom_scripts_setup
+    aws_setup
+
+    custom_scripts_setup
+
+    touch "$INITIALIZED_MARKER"
+    log "Setup completed. Marker written to $INITIALIZED_MARKER."
+fi
 
 exec "$@"
