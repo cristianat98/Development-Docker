@@ -274,9 +274,12 @@ bitbucket_setup() {
     fi
 
     if command -v bb >/dev/null 2>&1; then
-        log "Configuring Bitbucket CLI profile..."
-        bb profile create --name default --user "$user" --password "$password" --default
-        log "Bitbucket CLI setup completed."
+        log "Configuring Bitbucket CLI credentials..."
+        local config_file="${HOME:-/root}/.bitbucket-rest-cli-config.json"
+        jq -n --arg username "$user" --arg appPassword "$password" \
+            '{auth: {username: $username, appPassword: $appPassword}}' >"$config_file"
+        chmod 600 "$config_file"
+        log "Bitbucket CLI credentials written to $config_file."
     fi
 }
 

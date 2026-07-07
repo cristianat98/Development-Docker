@@ -165,7 +165,7 @@ are missing, before finally `exec`ing the container's `CMD`:
    (if `rtk` is on `PATH`), configures NotebookLM (if its CLI is installed)
    and registers the Context7 MCP server (if `CONTEXT7_API_KEY` is set)
 5. **Copilot CLI setup** — same categories as Claude, adapted for `copilot`
-6. **Bitbucket CLI** — creates the default profile from `BITBUCKET_USER`/`BITBUCKET_PASSWORD`
+6. **Bitbucket CLI** — writes `~/.bitbucket-rest-cli-config.json` (`auth.username`/`auth.appPassword`) from `BITBUCKET_USER`/`BITBUCKET_PASSWORD`
 7. **Docker registry login** — waits for the Docker daemon, then logs in with
    `DOCKER_USERNAME`/`DOCKER_PASSWORD` (optionally against `DOCKER_REGISTRY`)
 8. **Google Cloud setup** — decodes `GCLOUD_SERVICE_ACCOUNT_KEY_B64`, activates
