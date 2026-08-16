@@ -14,6 +14,10 @@ container start — so you can `docker exec` straight into a ready-to-work shell
 - **Databases**: MongoDB Shell (`mongosh`), PostgreSQL client (`psql`)
 - **CI & code quality**: `act` (run GitHub Actions locally), SonarQube Scanner CLI
 - **AI agent tooling**: GitHub Copilot CLI, Claude CLI, opencode
+- **Shell**: bash completion for the bundled CLIs — `docker`, `kubectl`, `gh`,
+  `terraform`, `aws`, `gcloud`, `git`, `psql`, `npm`, `act`, `opencode` and
+  `copilot` all tab-complete in a `docker exec -it <container> bash` shell
+  (`claude` is omitted — it has no completion subcommand)
 
 ## Build
 

@@ -11,6 +11,7 @@ WORKDIR /root
 RUN apt update && apt upgrade -y && apt install -y --no-install-recommends \
     apt-transport-https \
     bash \
+    bash-completion \
     ca-certificates \
     curl \
     dnsutils \
@@ -189,6 +190,52 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 # Claude CLI installer uses.
 RUN curl -fsSL https://opencode.ai/install | bash \
     && ln -s /root/.opencode/bin/opencode /root/.local/bin/opencode
+
+# -----------------------------
+# Bash completions
+# -----------------------------
+# Ubuntu ships per-tool completions under /usr/share/bash-completion/completions
+# but the bash-completion package that loads them is not pulled in, because the
+# essential-tools install above uses --no-install-recommends; it is now listed
+# there explicitly. Root's stock .bashrc also has its completion block commented
+# out, and `docker exec -it <container> bash` is a non-login interactive shell,
+# so /etc/profile.d is never read - the loader has to be sourced from .bashrc.
+#
+# Completions for the bundled CLIs are generated here at build time rather than
+# regenerated on every shell start, so opening a shell stays fast. Each one is
+# best-effort: a CLI that changes or drops its completion subcommand must not
+# break the image build. Empty output is deleted afterwards so a failed
+# generation shows up as a missing completion, not a sourced no-op.
+#
+# Nothing is written over an existing entry. Some packages already register
+# completions here, and google-cloud-cli's entry is a *symlink* to the SDK's
+# real script - writing through it replaces that script with a line that
+# sources itself, which sends every interactive bash into infinite recursion
+# until it segfaults. gcloud, git and psql already ship working completions,
+# so they are simply left alone. claude has no completion subcommand.
+RUN printf '%s\n' \
+        '' \
+        '# Load the bash-completion framework (root'"'"'s stock .bashrc leaves this off).' \
+        'if ! shopt -oq posix; then' \
+        '    [ -r /usr/share/bash-completion/bash_completion ] && . /usr/share/bash-completion/bash_completion' \
+        'fi' \
+        >> /root/.bashrc \
+    && mkdir -p /etc/bash_completion.d \
+    && write_completion() { \
+           local name="$1"; shift; \
+           [ -e "/etc/bash_completion.d/${name}" ] && return 0; \
+           "$@" > "/etc/bash_completion.d/${name}" 2>/dev/null || true; \
+       }; \
+       write_completion docker   docker completion bash; \
+       write_completion kubectl  kubectl completion bash; \
+       write_completion gh       gh completion -s bash; \
+       write_completion npm      npm completion; \
+       write_completion act      act completion bash; \
+       write_completion opencode opencode completion bash; \
+       write_completion copilot  copilot completion bash; \
+       [ -e /etc/bash_completion.d/terraform ] || printf 'complete -C /usr/bin/terraform terraform\n' > /etc/bash_completion.d/terraform; \
+       [ -e /etc/bash_completion.d/aws ] || printf 'complete -C aws_completer aws\n' > /etc/bash_completion.d/aws; \
+       find /etc/bash_completion.d -maxdepth 1 -type f -empty -delete
 
 # -----------------------------
 # Supervisor (for the embedded Docker daemon)
