@@ -219,11 +219,22 @@ services:
   dev:
     image: dev-image:base
     privileged: true
+    # Room for the daemon to stop cleanly on `docker compose down` (see below)
+    stop_grace_period: 45s
     volumes:
       # Persist images and layers built by the embedded daemon
       - embedded-docker-data:/var/lib/docker
     # ...env_file and the remaining volumes as in examples/embedded/
 ```
+
+**Give the container time to stop.** When the embedded daemon is running, the
+entrypoint stays as PID 1 so it can stop `dockerd` through supervisor on
+SIGTERM, rather than letting it be SIGKILLed mid-write with `/var/lib/docker`
+on a volume. That shutdown needs longer than Docker's default 10s window:
+`stop_grace_period: 45s` in Compose, or `--stop-timeout 45` with `docker run`.
+Too short a window cuts the shutdown off partway, which is worse than not
+attempting it. On the default (`docker.enabled` off) path none of this
+applies — the entrypoint still `exec`s your command as PID 1 exactly as before.
 
 `examples/embedded/docker-compose.yml` is this wired up in full. Mount a
 volume at `/var/lib/docker` as shown — without it, every image you pull or

@@ -20,6 +20,11 @@ services:
       # Images, layers and containers built by the embedded daemon. Without
       # this volume they live in the container's writable layer and are lost
       # whenever the container is recreated.
+      #
+      # Single instance only: /var/lib/docker must belong to exactly one
+      # daemon. Do not `--scale` this service or point a second container at
+      # this volume — two dockerds sharing one data-root corrupt it, and
+      # nothing detects the collision.
       - embedded-docker-data:/var/lib/docker
     # Running a Docker daemon inside a container requires this. Rootless mode
     # was tried to avoid it and does not help: it needs a privileged outer
@@ -28,6 +33,12 @@ services:
     # The whole dev container is privileged — that is the cost of this option;
     # ../dind/ keeps the dev container unprivileged instead.
     privileged: true
+    # Docker sends SIGTERM then SIGKILLs after this window. The entrypoint uses
+    # it to stop dockerd through supervisor (which itself waits up to 30s for
+    # the daemon to stop its containers and flush state), so this must stay
+    # comfortably above that — the default 10s would cut the shutdown off
+    # partway, which is worse than not attempting it.
+    stop_grace_period: 45s
     # Note: containers started *inside* this one cannot use --memory/--cpus.
     # The nested cgroup tree is in threaded mode, and `cgroup: host` (which
     # would fix it) needs a writable host cgroup tree, which a rootless host

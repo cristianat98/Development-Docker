@@ -540,6 +540,10 @@ custom_scripts_setup() {
     done < <(find "$dir" -maxdepth 1 -type f -name '*.sh' -print0 | sort -z)
 }
 
+# Set to true by docker_daemon_setup() once supervisord is running, so the
+# shutdown path below knows whether there is a daemon to stop gracefully.
+DOCKER_DAEMON_STARTED=false
+
 docker_daemon_setup() {
     local config_file="${SETUP_CONFIG:-/entrypoint/setup.json}"
 
@@ -585,6 +589,8 @@ docker_daemon_setup() {
         return
     fi
 
+    DOCKER_DAEMON_STARTED=true
+
     log "Waiting for the embedded Docker daemon to become reachable..."
     if wait_for_docker; then
         log "Embedded Docker daemon is reachable."
@@ -628,4 +634,41 @@ else
     log "Setup completed. Marker written to $INITIALIZED_MARKER."
 fi
 
-exec "$@"
+if [[ "$DOCKER_DAEMON_STARTED" != true ]]; then
+    # Default path, unchanged: the container's CMD replaces this shell and
+    # becomes PID 1, so it receives SIGTERM from `docker stop` directly.
+    exec "$@"
+fi
+
+# The embedded daemon needs a graceful stop, and only PID 1 is signalled on
+# `docker stop`. Keeping this shell as PID 1 lets it stop dockerd through
+# supervisor (honouring the stopsignal/stopwaitsecs/stopasgroup settings in
+# supervisord.conf) before the container goes away, instead of dockerd being
+# SIGKILLed mid-write with /var/lib/docker on a volume.
+#
+# This costs manual signal and exit-code forwarding, which is why it is scoped
+# to the opt-in Docker path rather than applied to every container.
+#
+# Give the container enough time to finish: `stop_grace_period` in Compose or
+# `--stop-timeout` on docker run must exceed supervisord's stopwaitsecs, or the
+# shutdown below is itself SIGKILLed partway through. See examples/embedded/.
+shutdown_daemon() {
+    log "Stopping the embedded Docker daemon before shutdown..."
+    supervisorctl -c /etc/supervisor/supervisord.conf stop dockerd >/dev/null 2>&1 ||
+        log "Could not stop dockerd cleanly via supervisor."
+    kill -TERM "$child" 2>/dev/null || true
+}
+
+"$@" &
+child=$!
+trap shutdown_daemon TERM INT
+
+# `wait` returns as soon as a trapped signal arrives, so wait again to reap the
+# child and pick up its real exit status.
+wait "$child"
+exit_code=$?
+if [[ $exit_code -gt 128 ]]; then
+    wait "$child" 2>/dev/null
+    exit_code=$?
+fi
+exit "$exit_code"

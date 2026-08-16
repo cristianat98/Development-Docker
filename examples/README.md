@@ -16,6 +16,10 @@ the Docker daemon lives.
 container. The sidecar is the simpler setup and keeps the dev container
 unprivileged.
 
+`embedded/` is single-instance by design: `/var/lib/docker` belongs to exactly
+one daemon, so don't `--scale` the `dev` service or point a second container
+at the same volume.
+
 **Pick `embedded/`** when you run `docker run -v $(pwd):/app ...` from inside
 the dev container. With the sidecar those paths exist on the dev container's
 filesystem but not the sidecar's, so the mount silently resolves to an empty
