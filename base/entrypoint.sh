@@ -17,7 +17,9 @@ wait_for_docker() {
         fi
         sleep 1
     done
-    return 1
+    # Probe once more after the final sleep, so a daemon that comes up during
+    # the last interval is not reported as unreachable.
+    docker info >/dev/null 2>&1
 }
 
 github_login() {
@@ -280,12 +282,31 @@ copilot_setup() {
 # Applies a jq filter to $1 (an opencode.json path) and writes the result
 # back in place — jq has no in-place edit flag, so this goes through a temp
 # file. Remaining args are passed through to jq (options, then the filter).
+# Returns non-zero instead of aborting the entrypoint, so a bad merge degrades
+# to "opencode config skipped" like every other setup step rather than stopping
+# the container from starting. The result is validated before it replaces the
+# target: jq exits 0 and emits nothing when handed an empty file, which would
+# otherwise silently install a zero-byte opencode.json.
 opencode_json_merge() {
     local target="$1"
     shift
     local tmp
-    tmp=$(mktemp)
-    jq "$@" "$target" >"$tmp"
+    tmp=$(mktemp "${target}.XXXXXX") || return 1
+
+    if ! jq "$@" "$target" >"$tmp" 2>/dev/null; then
+        log "Skipping opencode config merge: jq failed on $target."
+        rm -f "$tmp"
+        return 1
+    fi
+
+    if ! jq -e . "$tmp" >/dev/null 2>&1; then
+        log "Skipping opencode config merge: jq produced invalid JSON for $target."
+        rm -f "$tmp"
+        return 1
+    fi
+
+    # Preserve the target's existing mode; mktemp creates 0600.
+    chmod --reference="$target" "$tmp" 2>/dev/null || true
     mv "$tmp" "$target"
 }
 
@@ -329,7 +350,9 @@ opencode_setup() {
     # no non-interactive add command; merges must be additive so pre-existing
     # keys/entries not mentioned in setup.json survive.
     local opencode_json="/root/.config/opencode/opencode.json"
-    if [[ ! -f "$opencode_json" ]]; then
+    # Seed when absent, empty, or not valid JSON — jq treats an empty file as
+    # no input and would emit nothing, wiping the file on the first merge.
+    if ! jq -e . "$opencode_json" >/dev/null 2>&1; then
         echo '{}' >"$opencode_json"
     fi
 
@@ -342,7 +365,7 @@ opencode_setup() {
         url=$(jq -r ".opencode.http_mcps[$i].url" "$config_file")
         log "Adding opencode HTTP MCP: $name -> $url"
         opencode_json_merge "$opencode_json" --arg name "$name" --arg url "$url" \
-            '.mcp[$name] = {"type": "remote", "url": $url}'
+            '.mcp[$name] = {"type": "remote", "url": $url}' || true
     done
 
     # stdio mcps
@@ -356,7 +379,7 @@ opencode_setup() {
         command_json=$(jq -n --args '$ARGS.positional' -- "${command_args[@]}")
         log "Adding opencode stdio MCP: $name"
         opencode_json_merge "$opencode_json" --arg name "$name" --argjson command "$command_json" \
-            '.mcp[$name] = {"type": "local", "command": $command}'
+            '.mcp[$name] = {"type": "local", "command": $command}' || true
     done
 
     # plugins (flat list of npm package name strings)
@@ -365,7 +388,7 @@ opencode_setup() {
     if [[ "$plugins_json" != "[]" ]]; then
         log "Adding opencode plugins: $(jq -r 'join(", ")' <<<"$plugins_json")"
         opencode_json_merge "$opencode_json" --argjson new "$plugins_json" \
-            '.plugin = (((.plugin // []) + $new) | unique)'
+            '.plugin = (((.plugin // []) + $new) | unique)' || true
     fi
 
     log "opencode setup completed."
@@ -525,8 +548,14 @@ docker_daemon_setup() {
         return
     fi
 
+    # Fail soft on unreadable config: this runs on every container start, so an
+    # unguarded jq would turn a malformed setup.json into a boot failure for an
+    # already-initialized container rather than a skipped step.
     local enabled
-    enabled=$(jq -r '.docker.enabled // false' "$config_file")
+    if ! enabled=$(jq -r '.docker.enabled // false' "$config_file" 2>/dev/null); then
+        log "Skipping Docker daemon setup because $config_file is not valid JSON."
+        return
+    fi
 
     if [[ "$enabled" != "true" ]]; then
         log "Skipping Docker daemon setup because docker.enabled is not true in $config_file."

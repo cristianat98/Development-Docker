@@ -183,7 +183,8 @@ based on your own trade-off tolerance:
   a separate container with its own filesystem. Bind-mount source paths
   passed to `docker run -v $(pwd)/...` must exist identically on both
   containers, or the mount resolves to an empty or wrong directory on the
-  sidecar's side.- **Embedded daemon** (`examples/embedded/`, opt-in) — the daemon runs inside
+  sidecar's side.
+- **Embedded daemon** (`examples/embedded/`, opt-in) — the daemon runs inside
   the dev container itself, so client and daemon share one filesystem and
   bind-mount paths always resolve correctly. In exchange it must be enabled
   in `setup.json` and the dev container must run `--privileged`.

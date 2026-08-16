@@ -2,9 +2,14 @@
 .env
 setup.json
 
-# ...except the ones under examples/, which are tracked, secret-free templates
-!examples/*/.env
-!examples/*/setup.json
+# ...except these exact example templates, which are tracked and secret-free.
+# Listed literally rather than as examples/*/ so the pattern can never widen to
+# examples/entrypoint/ — the directory users drop their own keys and configs
+# into — or to any example directory added later.
+!examples/dind/.env
+!examples/dind/setup.json
+!examples/embedded/.env
+!examples/embedded/setup.json
 
 # Personal SSH/GPG keys dropped into entrypoint/ for setup.json to reference
 **/entrypoint/id_ed25519*
