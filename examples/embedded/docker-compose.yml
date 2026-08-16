@@ -1,0 +1,72 @@
+# Example Compose setup for the `base` development image running the Docker
+# daemon *inside* the dev container, plus MongoDB and PostgreSQL instances to
+# exercise the bundled `mongosh`/`psql` clients against. See ../dind/ for the
+# alternative that runs the daemon as a separate sidecar, and ../README.md for
+# how the two compare.
+#
+# Run from this directory: `docker compose up -d && docker compose exec dev bash`.
+
+services:
+  dev:
+    image: dev-image:base
+    env_file:
+      - .env
+    # The embedded daemon is opt-in: setup.json sets docker.enabled to true.
+    # Note there is deliberately no DOCKER_HOST in .env — setting it makes the
+    # entrypoint defer to that external daemon and skip the embedded one.
+    volumes:
+      - ./setup.json:/entrypoint/setup.json:ro
+      - ../entrypoint:/entrypoint/files:ro
+      # Images, layers and containers built by the embedded daemon. Without
+      # this volume they live in the container's writable layer and are lost
+      # whenever the container is recreated.
+      - embedded-docker-data:/var/lib/docker
+    # Running a Docker daemon inside a container requires this. Rootless mode
+    # was tried to avoid it and does not help: it needs a privileged outer
+    # container anyway (see ../README.md), so this image runs the daemon
+    # rootful and keeps enforced resource limits and kernel-speed networking.
+    # The whole dev container is privileged — that is the cost of this option;
+    # ../dind/ keeps the dev container unprivileged instead.
+    privileged: true
+    # Note: containers started *inside* this one cannot use --memory/--cpus.
+    # The nested cgroup tree is in threaded mode, and `cgroup: host` (which
+    # would fix it) needs a writable host cgroup tree, which a rootless host
+    # daemon does not provide. Unconstrained nested containers work fine.
+
+  # Example MongoDB instance, reachable from `dev` as `mongo:27017` —
+  # try it with the bundled `mongosh` client.
+  mongo:
+    image: mongo:7
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:-example}
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # Example PostgreSQL instance, reachable from `dev` as `postgres:5432` —
+  # try it with the bundled `psql` client.
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  embedded-docker-data:
+  mongo-data:
+  postgres-data:

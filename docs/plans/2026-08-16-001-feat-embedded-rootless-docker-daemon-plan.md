@@ -21,6 +21,20 @@ This plan supersedes the originating brainstorm's "separate variant image" decis
 
 ## Key Technical Decisions
 
+> **Correction applied during execution.** The rootless approach below did not
+> survive contact with reality and was replaced by a rootful daemon in a
+> privileged container. Rootless `dockerd` cannot create its user namespace
+> inside a container unless the outer container is `--privileged` anyway —
+> verified against both a rootless and a rootful host, where relaxing seccomp,
+> relaxing AppArmor, and adding `SYS_ADMIN` all still failed on
+> `newuidmap: write to uid_map failed: Operation not permitted`, and only
+> `--privileged` worked. Since the privileged container was unavoidable,
+> rootless bought no reduction in required privilege while giving up enforced
+> resource limits, kernel-speed networking, macvlan/GPU support and `overlay2`.
+> The decisions below are kept as the record of what was decided at plan time;
+> the shipped implementation and `README.md` describe what was actually built.
+
+
 - **Single image, Docker opt-in via `setup.json`, off by default.** The daemon, supervisor, and their dependencies are always installed in the one published image, but supervisor only ever launches when `setup.json`'s new `docker.enabled` field is `true`. A consumer who doesn't touch that field gets byte-for-byte the same runtime behavior `dev-image:base` has today — only the image's on-disk size grows. This ships as a normal feature release, not a breaking one, since default behavior is unchanged.
 - **Both the `docker:dind` sidecar and the embedded daemon remain available, as alternatives.** `examples/docker-compose.yml`'s existing sidecar is untouched. The README documents the embedded daemon as a second path to the same goal (working bind mounts), so a reader picks based on their own trade-off tolerance (sidecar: simpler, but bind-mount paths must match between the two containers; embedded: paths always resolve, but requires opting in and granting `/dev/fuse` + a seccomp relaxation).
 - **Dedicated non-root account (`dockerd`) owns the daemon — not a privilege-separation boundary.** Rootless `dockerd` refuses to start as root, so a dedicated account exists solely to satisfy that requirement. It provides no real isolation from root: root already bypasses standard Unix permission checks on sockets within the same container, so `entrypoint.sh` and the developer's own `docker exec` shell reach the daemon without `sudo`. Concretely, this means daemon compromise and root compromise are equivalent in this container's threat model — the account is a run-as-user workaround, not a security control. (This assumes the container itself retains `CAP_DAC_OVERRIDE` for root; see Risks & Dependencies.)

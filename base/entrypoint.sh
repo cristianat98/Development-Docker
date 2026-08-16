@@ -535,47 +535,22 @@ docker_daemon_setup() {
 
     # An explicitly set DOCKER_HOST wins over the embedded daemon. It is
     # inherited by `docker exec` sessions straight from the container
-    # environment, where it takes precedence over any Docker context this
-    # script could set, so starting the embedded daemon anyway would leave the
-    # entrypoint talking to one daemon and the developer's shell to another.
-    # Deferring keeps the external-daemon workflow (the docker:dind sidecar in
-    # examples/docker-compose.yml) working exactly as it does today.
+    # environment and takes precedence over the CLI's default socket, so
+    # starting the embedded daemon anyway would leave the entrypoint talking to
+    # one daemon and the developer's shell to another. Deferring keeps the
+    # external-daemon workflow (the docker:dind sidecar in examples/dind/)
+    # working exactly as it does today.
     if [[ -n "${DOCKER_HOST:-}" ]]; then
         log "DOCKER_HOST is set to '${DOCKER_HOST}'; using that daemon instead of the embedded one."
-        log "Unset DOCKER_HOST if you want the embedded rootless daemon that docker.enabled requests."
+        log "Unset DOCKER_HOST if you want the embedded daemon that docker.enabled requests."
         return
     fi
 
-    local dockerd_uid runtime_dir
-    dockerd_uid=$(id -u dockerd)
-    runtime_dir="/run/user/${dockerd_uid}"
+    # The daemon listens on /var/run/docker.sock, which is where the Docker CLI
+    # looks by default, so nothing needs to point the client at it - including
+    # `docker exec` shells, which would not inherit an exported DOCKER_HOST.
 
-    mkdir -p "$runtime_dir"
-    chown dockerd:dockerd "$runtime_dir"
-    chmod 0700 "$runtime_dir"
-
-    local docker_socket="unix://${runtime_dir}/docker.sock"
-    export XDG_RUNTIME_DIR="$runtime_dir"
-
-    # Point the Docker CLI at the embedded daemon with a context rather than a
-    # DOCKER_HOST export: an export only reaches this script and the CMD it
-    # execs, while a separate `docker exec` shell starts from the image's own
-    # environment and would not see it - and `docker exec` is the documented
-    # way developers use this image. A context persists in /root/.docker, so
-    # every root-run docker command finds the daemon however the shell started.
-    # DOCKER_HOST is guaranteed unset here - the check above returns early when
-    # it is set - so the context is the single source of truth for the CLI.
-    if docker context inspect embedded-rootless >/dev/null 2>&1; then
-        docker context update embedded-rootless \
-            --docker "host=${docker_socket}" >/dev/null
-    else
-        docker context create embedded-rootless \
-            --description "Embedded rootless Docker daemon" \
-            --docker "host=${docker_socket}" >/dev/null
-    fi
-    docker context use embedded-rootless >/dev/null
-
-    log "Starting supervisord to launch the embedded rootless Docker daemon..."
+    log "Starting supervisord to launch the embedded Docker daemon..."
     if ! supervisord -c /etc/supervisor/supervisord.conf; then
         log "Failed to launch supervisord; continuing without the embedded Docker daemon."
         return

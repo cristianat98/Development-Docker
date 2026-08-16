@@ -2,6 +2,10 @@
 .env
 setup.json
 
+# ...except the ones under examples/, which are tracked, secret-free templates
+!examples/*/.env
+!examples/*/setup.json
+
 # Personal SSH/GPG keys dropped into entrypoint/ for setup.json to reference
 **/entrypoint/id_ed25519*
 **/entrypoint/id_rsa*

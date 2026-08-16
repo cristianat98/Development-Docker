@@ -90,7 +90,7 @@ sections, empty arrays and absent keys are silently skipped.
   setup below, so a script here can install CLIs (e.g. `rtk`,
   `notebooklm-mcp-cli`) that those steps detect and configure automatically.
 
-- **`docker.enabled`** — opt-in flag for the embedded rootless Docker daemon.
+- **`docker.enabled`** — opt-in flag for the embedded Docker daemon.
   Defaults to `false` (or is skipped entirely if `setup.json` is absent),
   which preserves today's behavior exactly. See "Docker-in-Docker: sidecar
   vs. embedded daemon" under Run below for what enabling it requires and how
@@ -136,24 +136,29 @@ elsewhere.
 
 ### With Docker Compose (recommended)
 
-`examples/docker-compose.yml` is a ready-to-run setup for the `dev-image:base`
-image you built above: it mounts `setup.json` and the `entrypoint/` files
-directory at the expected paths, loads `.env`, and starts a `docker:dind`
-sidecar (`docker-daemon`) plus MongoDB and PostgreSQL instances — so the
-bundled `docker`, `mongosh` and `psql` clients all have something to talk to
-without touching the host. No host Docker socket required: set
-`DOCKER_HOST=tcp://docker-daemon:2375` in your `.env` so the container's
-Docker CLI talks to the sidecar (reach the databases as `mongo:27017` /
-`postgres:5432`):
+`examples/` holds two ready-to-run setups for the `dev-image:base` image you
+built above. Both mount `setup.json` and the shared `entrypoint/` files
+directory at the expected paths, load `.env`, and start MongoDB and
+PostgreSQL alongside the dev container — so the bundled `docker`, `mongosh`
+and `psql` clients all have something to talk to without touching the host
+(reach the databases as `mongo:27017` / `postgres:5432`). They differ only in
+where the Docker daemon runs:
+
+- **`examples/dind/`** — a `docker:dind` sidecar (`docker-daemon`) as the
+  Docker host, selected via `DOCKER_HOST=tcp://docker-daemon:2375` in `.env`.
+- **`examples/embedded/`** — the daemon inside the dev container, selected
+  via `docker.enabled` in `setup.json`, with a named volume for its image and
+  layer data. Requires a privileged dev container.
 
 ```bash
-cd examples
+cd examples/dind        # or: cd examples/embedded
 docker compose up -d
 docker compose exec dev bash
 ```
 
-Drop the `docker-daemon` service (and the `DOCKER_HOST` variable) from your
-`.env` if you'd rather mount the host's Docker socket instead.
+`examples/README.md` compares the two in more detail; the trade-off is
+summarised under [Docker-in-Docker](#docker-in-docker-sidecar-vs-embedded-daemon)
+below. Mount the host's Docker socket instead if you'd rather not run either.
 
 ### With plain `docker run`
 
@@ -174,16 +179,19 @@ the command stays alive for you to `docker exec -it <container> bash` into.
 There are two ways to give the bundled Docker CLI a daemon to talk to. Pick
 based on your own trade-off tolerance:
 
-- **`docker:dind` sidecar** (`examples/docker-compose.yml`'s `docker-daemon`
-  service, described above) — simplest to set up, but it's a separate
-  container with its own filesystem. Bind-mount source paths passed to
-  `docker run -v $(pwd)/...` must exist identically on both containers, or
-  the mount resolves to an empty or wrong directory on the sidecar's side.
-- **Embedded rootless daemon** (opt-in, new in this image) — the daemon runs
-  inside the dev container itself, so client and daemon share one
-  filesystem and bind-mount paths always resolve correctly. In exchange, it
-  must be explicitly enabled in `setup.json` and the container needs extra
-  runtime permissions, described below.
+- **`docker:dind` sidecar** (`examples/dind/`) — simplest to set up, but it's
+  a separate container with its own filesystem. Bind-mount source paths
+  passed to `docker run -v $(pwd)/...` must exist identically on both
+  containers, or the mount resolves to an empty or wrong directory on the
+  sidecar's side.- **Embedded daemon** (`examples/embedded/`, opt-in) — the daemon runs inside
+  the dev container itself, so client and daemon share one filesystem and
+  bind-mount paths always resolve correctly. In exchange it must be enabled
+  in `setup.json` and the dev container must run `--privileged`.
+
+The deciding question is usually bind mounts: if you run
+`docker run -v $(pwd):/app ...` from inside the dev container, use the
+embedded daemon. Otherwise prefer the sidecar and keep the dev container
+unprivileged.
 
 #### Enabling the embedded daemon
 
@@ -195,89 +203,77 @@ Set `docker.enabled: true` in `setup.json`:
 }
 ```
 
-When enabled, `entrypoint.sh` starts `supervisord`, which launches
-`dockerd-rootless.sh` as a dedicated `dockerd` account, waits for the daemon
-to become reachable, and points the Docker CLI at it via a Docker context
-(`embedded-rootless`, targeting `unix:///run/user/<uid>/docker.sock`). A
-context is used rather than an environment variable so that `docker exec`
-sessions — which start from the container's own environment, not the
-entrypoint's — also resolve the daemon. This step runs on every container
+When enabled, `entrypoint.sh` starts `supervisord`, which launches `dockerd`
+and waits for it to become reachable. The daemon listens on the default
+`/var/run/docker.sock`, so the Docker CLI finds it with no `DOCKER_HOST` or
+context — including from `docker exec` shells. This runs on every container
 start, including restarts of an already initialized container.
 
-**`DOCKER_HOST` wins over `docker.enabled`.** If `DOCKER_HOST` is set, the
-entrypoint uses that daemon and skips the embedded one entirely, logging
-which it chose. That keeps the sidecar workflow working unchanged — set
-`DOCKER_HOST=tcp://docker-daemon:2375` and you get the sidecar whatever
-`docker.enabled` says. The precedence runs this way because `docker exec`
-sessions inherit `DOCKER_HOST` from the container environment, where it
-overrides any context the entrypoint sets; deferring to it keeps every shell
-in the container pointed at the same daemon. To use the embedded daemon,
-leave `DOCKER_HOST` unset.
-
-The container also needs two extra runtime grants for the rootless daemon
-to actually start: the `/dev/fuse` device (needed by the
-`fuse-overlayfs` storage driver) and a seccomp relaxation (rootless
-`dockerd` needs syscalls a default seccomp profile blocks).
-
-**With Docker Compose:**
+**The dev container must be privileged.** A Docker daemon cannot start inside
+an unprivileged container. `privileged: true` in Compose, or `--privileged`
+with `docker run`:
 
 ```yaml
 services:
   dev:
     image: dev-image:base
-    devices:
-      - /dev/fuse
-    security_opt:
-      - seccomp=unconfined
-    # ...env_file, volumes, etc. as in examples/docker-compose.yml
+    privileged: true
+    volumes:
+      # Persist images and layers built by the embedded daemon
+      - embedded-docker-data:/var/lib/docker
+    # ...env_file and the remaining volumes as in examples/embedded/
 ```
 
-**With plain `docker run`:**
+`examples/embedded/docker-compose.yml` is this wired up in full. Mount a
+volume at `/var/lib/docker` as shown — without it, every image you pull or
+build inside the container is lost when the container is recreated.
 
-```bash
-docker run -it --rm \
-  --device /dev/fuse \
-  --security-opt seccomp=unconfined \
-  --env-file .env \
-  -v "$(pwd)/setup.json:/entrypoint/setup.json" \
-  -v "$(pwd)/entrypoint:/entrypoint/files" \
-  dev-image:base \
-  bash
-```
+If the container is not privileged, `dockerd` fails to start; supervisor logs
+the failure clearly instead of silently crash-looping, and the rest of the
+container keeps working normally — you just won't have a usable Docker daemon.
 
-Without both grants, `dockerd` fails to start; supervisor logs the failure
-clearly instead of silently crash-looping, and the rest of the container
-keeps working normally — you just won't have a usable Docker daemon.
+**`DOCKER_HOST` wins over `docker.enabled`.** If `DOCKER_HOST` is set, the
+entrypoint uses that daemon and skips the embedded one, logging which it
+chose. That keeps the sidecar workflow working unchanged — set
+`DOCKER_HOST=tcp://docker-daemon:2375` and you get the sidecar whatever
+`docker.enabled` says. The precedence runs this way because `docker exec`
+sessions inherit `DOCKER_HOST` from the container environment and it
+overrides the default socket, so deferring to it keeps every shell in the
+container pointed at the same daemon. To use the embedded daemon, leave
+`DOCKER_HOST` unset.
 
-**Whole-container seccomp exposure.** `security_opt` applies to the entire
-container, not to a single process. Setting `seccomp=unconfined` to let
-rootless `dockerd` start relaxes syscall filtering for everything else
-running in the container too — terraform, gcloud, aws-cli, kubectl, and your
-own shell — not just the daemon, for as long as the container runs. This is
-the trade-off enabling Docker makes; a narrower, Docker-only seccomp profile
-is possible in principle but isn't shipped today.
+#### Why privileged, and why not rootless
 
-#### Rootless mode limitations
+Rootless mode was the original plan, specifically to avoid `--privileged`. It
+does not achieve that: rootless `dockerd` cannot create its user namespace
+inside a container unless the outer container is privileged anyway. Verified
+against both a rootless and a rootful host — relaxing seccomp, relaxing
+AppArmor, and adding `SYS_ADMIN` all still fail on
+`newuidmap: write to uid_map failed: Operation not permitted`; only
+`--privileged` works. Since the privileged container is unavoidable, the
+daemon runs rootful, which keeps `overlay2`, kernel-speed networking and
+macvlan/GPU support that rootless would have given up for nothing.
 
-Independent of this image, Docker's rootless mode has known limitations
-worth knowing before you rely on the embedded daemon:
+Be clear about the trade-off this makes: the whole dev container is
+privileged, and everything in it — terraform, gcloud, kubectl, your shell —
+runs with that privilege, not just the daemon. A privileged container can
+generally escape to the host. The sidecar option confines privilege to the
+sidecar and leaves your dev container unprivileged; prefer it unless you need
+working bind mounts.
 
-- **CPU/memory limits aren't enforced.** Rootless mode lacks real cgroup
-  delegation without additional host-level setup this image doesn't
-  attempt, so containers built/run against the embedded daemon aren't
-  actually constrained by any limits you set — a runaway nested container
-  can consume unbounded host resources.
-- **Networking is slower.** Rootless Docker routes traffic through a
-  userspace networking stack instead of the kernel-level networking a
-  rootful daemon uses, adding overhead.
-- **No macvlan networks or GPU passthrough.** Both require privileges
-  rootless mode doesn't have.
+#### Known limitation: nested resource limits
+
+Containers started *inside* the dev container cannot use `--memory` or
+`--cpus` — the nested cgroup tree is in threaded mode, and the usual fix
+(`cgroup: host`) needs a writable host cgroup tree, which a rootless host
+daemon does not provide. Unconstrained nested containers work normally. This
+means a runaway nested container can consume host resources unchecked.
 
 ## What the entrypoint does
 
 Before any of the steps below, and on *every* start (even restarts of an
 already-initialized container), `entrypoint.sh` checks `setup.json`'s
-`docker.enabled` field and, if `true`, starts the embedded rootless Docker
+`docker.enabled` field and, if `true`, starts the embedded Docker
 daemon and waits for it to become reachable — see "Docker-in-Docker: sidecar
 vs. embedded daemon" above. This runs first so the daemon is already up by
 the time step 7 below tries to log in to it.

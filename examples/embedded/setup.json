@@ -1,0 +1,20 @@
+{
+  "docker": {
+    "enabled": true
+  },
+  "scripts": {
+    "dir": "scripts"
+  },
+  "claude": {
+    "global_md": "CLAUDE.example.md",
+    "plugins": [
+      {
+        "marketplace_id": "EveryInc/compound-engineering-plugin",
+        "plugin_id": "compound-engineering"
+      }
+    ]
+  },
+  "opencode": {
+    "global_md": "AGENTS.example.md"
+  }
+}
