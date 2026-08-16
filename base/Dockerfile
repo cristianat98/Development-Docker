@@ -85,7 +85,29 @@ ENV PATH="/root/.local/bin:/root/go/bin:/usr/local/go/bin:${PATH}"
 RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg \
      && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
          > /etc/apt/sources.list.d/docker.list \
-     && apt update && apt install -y docker-ce-cli
+     && apt update && apt install -y docker-ce-cli docker-ce containerd.io docker-ce-rootless-extras uidmap
+
+# -----------------------------
+# Rootless Docker daemon account
+# -----------------------------
+# Rootless dockerd refuses to start as root, so a dedicated non-root account
+# exists solely to satisfy that requirement (it is a run-as-user workaround,
+# not a privilege-separation boundary — see the plan's Key Technical
+# Decisions). Ubuntu's useradd already auto-assigns a subuid/subgid range on
+# user creation, but we drop that implicit range and pin an explicit,
+# documented one instead so the size is guaranteed regardless of distro
+# defaults. daemon.json intentionally leaves "storage-driver" unset: rootless
+# dockerd auto-selects overlay2 if the kernel supports unprivileged overlay
+# mounts, falling back to fuse-overlayfs and only using vfs as a last
+# resort — that default order already satisfies "prefer overlay-family, not
+# vfs" without hardcoding a single driver that could fail to start on hosts
+# whose kernel only supports one of the two.
+RUN useradd --create-home --shell /bin/bash dockerd \
+    && sed -i '/^dockerd:/d' /etc/subuid /etc/subgid \
+    && usermod --add-subuids 100000-165535 --add-subgids 100000-165535 dockerd \
+    && mkdir -p /home/dockerd/.config/docker \
+    && printf '{}\n' > /home/dockerd/.config/docker/daemon.json \
+    && chown -R dockerd:dockerd /home/dockerd/.config
 
 # -----------------------------
 # Terraform CLI
@@ -178,6 +200,35 @@ RUN curl -fsSL https://gh.io/copilot-install | bash
 # Claude CLI
 # -----------------------------
 RUN curl -fsSL https://claude.ai/install.sh | bash
+
+# -----------------------------
+# opencode CLI
+# -----------------------------
+# The opencode installer always places the binary at ~/.opencode/bin (no env
+# var override exists) and otherwise relies on editing shell rc files to add
+# that directory to PATH - which has no effect in a non-interactive RUN. Link
+# it into /root/.local/bin instead, the same already-on-PATH directory the
+# Claude CLI installer uses.
+RUN curl -fsSL https://opencode.ai/install | bash \
+    && ln -s /root/.opencode/bin/opencode /root/.local/bin/opencode
+
+# -----------------------------
+# Supervisor (for the rootless Docker daemon)
+# -----------------------------
+# Installs and configures supervisor to run dockerd-rootless.sh as the
+# dockerd account, but does not launch supervisord itself here -
+# entrypoint.sh decides whether to start it, gated by setup.json's
+# docker.enabled opt-in (see a later implementation unit). No new apt
+# repo is needed: supervisor is in Ubuntu 24.04's universe repo, already
+# reachable from the apt update at the top of this file. Ubuntu's
+# supervisor package ships a default /etc/supervisor/supervisord.conf
+# that already includes every *.conf file under /etc/supervisor/conf.d/,
+# so supervisord.conf here is a conf.d fragment containing only the
+# [program:dockerd] stanza, not a full supervisord config.
+RUN apt install -y supervisor \
+    && mkdir -p /var/log/supervisor \
+    && chown dockerd:dockerd /var/log/supervisor
+COPY supervisord.conf /etc/supervisor/conf.d/dockerd.conf
 
 # -----------------------------
 # Clean up

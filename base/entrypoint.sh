@@ -6,6 +6,20 @@ log() {
     echo "[entrypoint] $*"
 }
 
+# Polls `docker info` for up to 30s. Shared by docker_login() (waiting on
+# whatever daemon DOCKER_HOST already points at) and docker_daemon_setup()
+# (waiting on the embedded daemon it just started).
+wait_for_docker() {
+    local attempt
+    for attempt in $(seq 1 30); do
+        if docker info >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
 github_login() {
     local token="${GITHUB_TOKEN:-}"
 
@@ -263,6 +277,99 @@ copilot_setup() {
     log "Copilot setup completed."
 }
 
+# Applies a jq filter to $1 (an opencode.json path) and writes the result
+# back in place — jq has no in-place edit flag, so this goes through a temp
+# file. Remaining args are passed through to jq (options, then the filter).
+opencode_json_merge() {
+    local target="$1"
+    shift
+    local tmp
+    tmp=$(mktemp)
+    jq "$@" "$target" >"$tmp"
+    mv "$tmp" "$target"
+}
+
+opencode_setup() {
+    local config_file="${SETUP_CONFIG:-/entrypoint/setup.json}"
+    local files_dir="${SETUP_FILES_DIR:-/entrypoint/files}"
+
+    if [[ ! -f "$config_file" ]]; then
+        log "Skipping opencode setup because $config_file is not present."
+        return
+    fi
+
+    if ! command -v opencode >/dev/null 2>&1; then
+        log "Skipping opencode setup because opencode is not installed."
+        return
+    fi
+
+    mkdir -p /root/.config/opencode
+
+    # global AGENTS.md
+    local global_md
+    global_md=$(jq -r '.opencode.global_md // empty' "$config_file")
+    if [[ -n "$global_md" ]]; then
+        local src="${files_dir}/${global_md}"
+        if [[ -f "$src" ]]; then
+            cp "$src" /root/.config/opencode/AGENTS.md
+            log "opencode AGENTS.md installed from $src."
+        else
+            log "Skipping opencode global MD: $src not found."
+        fi
+    fi
+
+    # skills
+    local skills_dir
+    skills_dir=$(jq -r '.opencode.skills_dir // empty' "$config_file")
+    if [[ -n "$skills_dir" ]]; then
+        install_skills "opencode" "${files_dir}/${skills_dir}" /root/.config/opencode/skills
+    fi
+
+    # opencode.json (mcp + plugin) — written directly via jq since opencode has
+    # no non-interactive add command; merges must be additive so pre-existing
+    # keys/entries not mentioned in setup.json survive.
+    local opencode_json="/root/.config/opencode/opencode.json"
+    if [[ ! -f "$opencode_json" ]]; then
+        echo '{}' >"$opencode_json"
+    fi
+
+    # http mcps
+    local count
+    count=$(jq '.opencode.http_mcps // [] | length' "$config_file")
+    for i in $(seq 0 $((count - 1))); do
+        local name url
+        name=$(jq -r ".opencode.http_mcps[$i].name" "$config_file")
+        url=$(jq -r ".opencode.http_mcps[$i].url" "$config_file")
+        log "Adding opencode HTTP MCP: $name -> $url"
+        opencode_json_merge "$opencode_json" --arg name "$name" --arg url "$url" \
+            '.mcp[$name] = {"type": "remote", "url": $url}'
+    done
+
+    # stdio mcps
+    count=$(jq '.opencode.stdio_mcps // [] | length' "$config_file")
+    for i in $(seq 0 $((count - 1))); do
+        local name command command_json
+        local -a command_args
+        name=$(jq -r ".opencode.stdio_mcps[$i].name" "$config_file")
+        command=$(jq -r ".opencode.stdio_mcps[$i].command" "$config_file")
+        read -ra command_args <<<"$command"
+        command_json=$(jq -n --args '$ARGS.positional' -- "${command_args[@]}")
+        log "Adding opencode stdio MCP: $name"
+        opencode_json_merge "$opencode_json" --arg name "$name" --argjson command "$command_json" \
+            '.mcp[$name] = {"type": "local", "command": $command}'
+    done
+
+    # plugins (flat list of npm package name strings)
+    local plugins_json
+    plugins_json=$(jq -c '.opencode.plugins // []' "$config_file")
+    if [[ "$plugins_json" != "[]" ]]; then
+        log "Adding opencode plugins: $(jq -r 'join(", ")' <<<"$plugins_json")"
+        opencode_json_merge "$opencode_json" --argjson new "$plugins_json" \
+            '.plugin = (((.plugin // []) + $new) | unique)'
+    fi
+
+    log "opencode setup completed."
+}
 
 bitbucket_setup() {
     local user="${BITBUCKET_USER:-}"
@@ -299,15 +406,7 @@ docker_login() {
     fi
 
     log "Waiting for the Docker daemon to be reachable..."
-    local attempt
-    for attempt in $(seq 1 30); do
-        if docker info >/dev/null 2>&1; then
-            break
-        fi
-        sleep 1
-    done
-
-    if ! docker info >/dev/null 2>&1; then
+    if ! wait_for_docker; then
         log "Skipping Docker registry login: Docker daemon is not reachable."
         return
     fi
@@ -418,6 +517,84 @@ custom_scripts_setup() {
     done < <(find "$dir" -maxdepth 1 -type f -name '*.sh' -print0 | sort -z)
 }
 
+docker_daemon_setup() {
+    local config_file="${SETUP_CONFIG:-/entrypoint/setup.json}"
+
+    if [[ ! -f "$config_file" ]]; then
+        log "Skipping Docker daemon setup because $config_file is not present."
+        return
+    fi
+
+    local enabled
+    enabled=$(jq -r '.docker.enabled // false' "$config_file")
+
+    if [[ "$enabled" != "true" ]]; then
+        log "Skipping Docker daemon setup because docker.enabled is not true in $config_file."
+        return
+    fi
+
+    # An explicitly set DOCKER_HOST wins over the embedded daemon. It is
+    # inherited by `docker exec` sessions straight from the container
+    # environment, where it takes precedence over any Docker context this
+    # script could set, so starting the embedded daemon anyway would leave the
+    # entrypoint talking to one daemon and the developer's shell to another.
+    # Deferring keeps the external-daemon workflow (the docker:dind sidecar in
+    # examples/docker-compose.yml) working exactly as it does today.
+    if [[ -n "${DOCKER_HOST:-}" ]]; then
+        log "DOCKER_HOST is set to '${DOCKER_HOST}'; using that daemon instead of the embedded one."
+        log "Unset DOCKER_HOST if you want the embedded rootless daemon that docker.enabled requests."
+        return
+    fi
+
+    local dockerd_uid runtime_dir
+    dockerd_uid=$(id -u dockerd)
+    runtime_dir="/run/user/${dockerd_uid}"
+
+    mkdir -p "$runtime_dir"
+    chown dockerd:dockerd "$runtime_dir"
+    chmod 0700 "$runtime_dir"
+
+    local docker_socket="unix://${runtime_dir}/docker.sock"
+    export XDG_RUNTIME_DIR="$runtime_dir"
+
+    # Point the Docker CLI at the embedded daemon with a context rather than a
+    # DOCKER_HOST export: an export only reaches this script and the CMD it
+    # execs, while a separate `docker exec` shell starts from the image's own
+    # environment and would not see it - and `docker exec` is the documented
+    # way developers use this image. A context persists in /root/.docker, so
+    # every root-run docker command finds the daemon however the shell started.
+    # DOCKER_HOST is guaranteed unset here - the check above returns early when
+    # it is set - so the context is the single source of truth for the CLI.
+    if docker context inspect embedded-rootless >/dev/null 2>&1; then
+        docker context update embedded-rootless \
+            --docker "host=${docker_socket}" >/dev/null
+    else
+        docker context create embedded-rootless \
+            --description "Embedded rootless Docker daemon" \
+            --docker "host=${docker_socket}" >/dev/null
+    fi
+    docker context use embedded-rootless >/dev/null
+
+    log "Starting supervisord to launch the embedded rootless Docker daemon..."
+    if ! supervisord -c /etc/supervisor/supervisord.conf; then
+        log "Failed to launch supervisord; continuing without the embedded Docker daemon."
+        return
+    fi
+
+    log "Waiting for the embedded Docker daemon to become reachable..."
+    if wait_for_docker; then
+        log "Embedded Docker daemon is reachable."
+    else
+        log "Embedded Docker daemon did not become reachable within the timeout; continuing anyway."
+    fi
+}
+
+# Runs on every container start (not gated by INITIALIZED_MARKER) and must
+# complete before the marker-guarded block below, because docker_login()
+# inside that block polls the daemon this function starts. See the plan's
+# Key Technical Decisions for why this ordering matters.
+docker_daemon_setup
+
 INITIALIZED_MARKER="${SETUP_INITIALIZED_MARKER:-/root/.entrypoint_initialized}"
 
 if [[ -f "$INITIALIZED_MARKER" ]]; then
@@ -430,6 +607,8 @@ else
     claude_setup
 
     copilot_setup
+
+    opencode_setup
 
     bitbucket_setup
 

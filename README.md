@@ -13,7 +13,7 @@ container start — so you can `docker exec` straight into a ready-to-work shell
 - **VCS & collaboration**: Git (latest via PPA), GitHub CLI (`gh`), Bitbucket CLI (`bb`), pre-commit + go-pre-commit
 - **Databases**: MongoDB Shell (`mongosh`), PostgreSQL client (`psql`)
 - **CI & code quality**: `act` (run GitHub Actions locally), SonarQube Scanner CLI
-- **AI agent tooling**: GitHub Copilot CLI, Claude CLI
+- **AI agent tooling**: GitHub Copilot CLI, Claude CLI, opencode
 
 ## Build
 
@@ -90,6 +90,12 @@ sections, empty arrays and absent keys are silently skipped.
   setup below, so a script here can install CLIs (e.g. `rtk`,
   `notebooklm-mcp-cli`) that those steps detect and configure automatically.
 
+- **`docker.enabled`** — opt-in flag for the embedded rootless Docker daemon.
+  Defaults to `false` (or is skipped entirely if `setup.json` is absent),
+  which preserves today's behavior exactly. See "Docker-in-Docker: sidecar
+  vs. embedded daemon" under Run below for what enabling it requires and how
+  it compares to the `docker:dind` sidecar.
+
 - **`claude`** / **`copilot`** — same shape for both agents:
   - `global_md` — global instructions file, resolved against the files
     directory and installed as `~/.claude/CLAUDE.md` (Claude only;
@@ -103,6 +109,23 @@ sections, empty arrays and absent keys are silently skipped.
     shell command string, split at runtime
   - `plugins` — array of `{ marketplace_id, plugin_id }`; Copilot installs
     using the compound `plugin_id@marketplace_id` form
+
+- **`opencode`** — same `global_md`/`skills_dir`/`http_mcps`/`stdio_mcps`
+  shape as `claude`/`copilot` above (global instructions installed as
+  `~/.config/opencode/AGENTS.md`, skills under
+  `~/.config/opencode/skills/...`), written non-interactively straight into
+  `~/.config/opencode/opencode.json`'s `mcp` key:
+  - `global_md` — resolved against the files directory and installed as
+    `~/.config/opencode/AGENTS.md`
+    (`examples/entrypoint/AGENTS.example.md` shows the expected shape)
+  - `skills_dir` — resolved against the files directory; every immediate
+    subdirectory is installed as a skill under `~/.config/opencode/skills/...`
+  - `http_mcps` — array of `{ name, url }` HTTP MCP servers
+  - `stdio_mcps` — array of `{ name, command }`, where `command` is the full
+    shell command string, split at runtime
+  - `plugins` — flat array of npm package name strings (unlike `claude`'s
+    `{ marketplace_id, plugin_id }` objects — `opencode` has no plugin
+    marketplace to mirror), merged into `opencode.json`'s `plugin` array
 
 By default the entrypoint looks for the config at `/entrypoint/setup.json` and
 the files directory at `/entrypoint/files`; override these with the
@@ -146,11 +169,122 @@ docker run -it --rm \
 The default `CMD` is `sleep infinity`, so a container started without overriding
 the command stays alive for you to `docker exec -it <container> bash` into.
 
+### Docker-in-Docker: sidecar vs. embedded daemon
+
+There are two ways to give the bundled Docker CLI a daemon to talk to. Pick
+based on your own trade-off tolerance:
+
+- **`docker:dind` sidecar** (`examples/docker-compose.yml`'s `docker-daemon`
+  service, described above) — simplest to set up, but it's a separate
+  container with its own filesystem. Bind-mount source paths passed to
+  `docker run -v $(pwd)/...` must exist identically on both containers, or
+  the mount resolves to an empty or wrong directory on the sidecar's side.
+- **Embedded rootless daemon** (opt-in, new in this image) — the daemon runs
+  inside the dev container itself, so client and daemon share one
+  filesystem and bind-mount paths always resolve correctly. In exchange, it
+  must be explicitly enabled in `setup.json` and the container needs extra
+  runtime permissions, described below.
+
+#### Enabling the embedded daemon
+
+Set `docker.enabled: true` in `setup.json`:
+
+```json
+"docker": {
+  "enabled": true
+}
+```
+
+When enabled, `entrypoint.sh` starts `supervisord`, which launches
+`dockerd-rootless.sh` as a dedicated `dockerd` account, waits for the daemon
+to become reachable, and points the Docker CLI at it via a Docker context
+(`embedded-rootless`, targeting `unix:///run/user/<uid>/docker.sock`). A
+context is used rather than an environment variable so that `docker exec`
+sessions — which start from the container's own environment, not the
+entrypoint's — also resolve the daemon. This step runs on every container
+start, including restarts of an already initialized container.
+
+**`DOCKER_HOST` wins over `docker.enabled`.** If `DOCKER_HOST` is set, the
+entrypoint uses that daemon and skips the embedded one entirely, logging
+which it chose. That keeps the sidecar workflow working unchanged — set
+`DOCKER_HOST=tcp://docker-daemon:2375` and you get the sidecar whatever
+`docker.enabled` says. The precedence runs this way because `docker exec`
+sessions inherit `DOCKER_HOST` from the container environment, where it
+overrides any context the entrypoint sets; deferring to it keeps every shell
+in the container pointed at the same daemon. To use the embedded daemon,
+leave `DOCKER_HOST` unset.
+
+The container also needs two extra runtime grants for the rootless daemon
+to actually start: the `/dev/fuse` device (needed by the
+`fuse-overlayfs` storage driver) and a seccomp relaxation (rootless
+`dockerd` needs syscalls a default seccomp profile blocks).
+
+**With Docker Compose:**
+
+```yaml
+services:
+  dev:
+    image: dev-image:base
+    devices:
+      - /dev/fuse
+    security_opt:
+      - seccomp=unconfined
+    # ...env_file, volumes, etc. as in examples/docker-compose.yml
+```
+
+**With plain `docker run`:**
+
+```bash
+docker run -it --rm \
+  --device /dev/fuse \
+  --security-opt seccomp=unconfined \
+  --env-file .env \
+  -v "$(pwd)/setup.json:/entrypoint/setup.json" \
+  -v "$(pwd)/entrypoint:/entrypoint/files" \
+  dev-image:base \
+  bash
+```
+
+Without both grants, `dockerd` fails to start; supervisor logs the failure
+clearly instead of silently crash-looping, and the rest of the container
+keeps working normally — you just won't have a usable Docker daemon.
+
+**Whole-container seccomp exposure.** `security_opt` applies to the entire
+container, not to a single process. Setting `seccomp=unconfined` to let
+rootless `dockerd` start relaxes syscall filtering for everything else
+running in the container too — terraform, gcloud, aws-cli, kubectl, and your
+own shell — not just the daemon, for as long as the container runs. This is
+the trade-off enabling Docker makes; a narrower, Docker-only seccomp profile
+is possible in principle but isn't shipped today.
+
+#### Rootless mode limitations
+
+Independent of this image, Docker's rootless mode has known limitations
+worth knowing before you rely on the embedded daemon:
+
+- **CPU/memory limits aren't enforced.** Rootless mode lacks real cgroup
+  delegation without additional host-level setup this image doesn't
+  attempt, so containers built/run against the embedded daemon aren't
+  actually constrained by any limits you set — a runaway nested container
+  can consume unbounded host resources.
+- **Networking is slower.** Rootless Docker routes traffic through a
+  userspace networking stack instead of the kernel-level networking a
+  rootful daemon uses, adding overhead.
+- **No macvlan networks or GPU passthrough.** Both require privileges
+  rootless mode doesn't have.
+
 ## What the entrypoint does
 
-On every start, `entrypoint.sh` runs through the following steps, each skipped
-gracefully when its prerequisites (env vars, `setup.json` keys, installed CLIs)
-are missing, before finally `exec`ing the container's `CMD`:
+Before any of the steps below, and on *every* start (even restarts of an
+already-initialized container), `entrypoint.sh` checks `setup.json`'s
+`docker.enabled` field and, if `true`, starts the embedded rootless Docker
+daemon and waits for it to become reachable — see "Docker-in-Docker: sidecar
+vs. embedded daemon" above. This runs first so the daemon is already up by
+the time step 7 below tries to log in to it.
+
+On every start, `entrypoint.sh` then runs through the following steps, each
+skipped gracefully when its prerequisites (env vars, `setup.json` keys,
+installed CLIs) are missing, before finally `exec`ing the container's `CMD`:
 
 1. **GitHub CLI login** — authenticates `gh` using `GITHUB_TOKEN`
 2. **Git setup** — sets `user.name`/`user.email`, imports a passphrase-less GPG
@@ -210,4 +344,5 @@ bb --version
 sonar-scanner --version
 copilot --version
 claude --version
+opencode --version
 ```

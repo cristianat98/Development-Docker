@@ -14,6 +14,9 @@
   "scripts": {
     "dir": "scripts"
   },
+  "docker": {
+    "enabled": false
+  },
   "claude": {
     "global_md": "CLAUDE.example.md",
     "skills_dir": "claude-skills",
@@ -50,5 +53,25 @@
     ],
     "stdio_mcps": [],
     "plugins": []
+  },
+  "opencode": {
+    "global_md": "AGENTS.example.md",
+    "skills_dir": "opencode-skills",
+    "http_mcps": [
+      {
+        "name": "atlassian",
+        "url": "https://mcp.atlassian.com/v1/mcp"
+      }
+    ],
+    "stdio_mcps": [
+      {
+        "name": "m365",
+        "command": "npx -y @softeria/ms-365-mcp-server --toon"
+      }
+    ],
+    "plugins": [
+      "opencode-helicone-session",
+      "opencode-wakatime"
+    ]
   }
 }
