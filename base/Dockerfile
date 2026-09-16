@@ -47,7 +47,7 @@ RUN add-apt-repository ppa:deadsnakes/ppa -y && apt update && apt install -y pyt
 # -----------------------------
 # Node.JS and npm
 # -----------------------------
-RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash \
+RUN curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash \
     && export NVM_DIR="$NVM_DIR" \
     && [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" \
     && [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion" \
@@ -95,7 +95,15 @@ RUN curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/sh
     && echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
        > /etc/apt/sources.list.d/hashicorp.list \
     && apt update && apt install -y terraform
-RUN curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+# tflint's upstream install_linux.sh was removed (the old raw.githubusercontent
+# URL now 404s), and `curl -s ... | bash` would pipe that 404 body straight into
+# a shell. Install the pinned release archive directly with `-fsSL` so any HTTP
+# error fails the build loudly instead.
+RUN TFLINT_VERSION=v0.64.0 \
+    && curl -fsSL "https://github.com/terraform-linters/tflint/releases/download/${TFLINT_VERSION}/tflint_linux_amd64.zip" -o /tmp/tflint.zip \
+    && unzip -q /tmp/tflint.zip -d /usr/local/bin \
+    && rm /tmp/tflint.zip \
+    && tflint --version
 
 # -----------------------------
 # Google Cloud SDK
@@ -108,7 +116,7 @@ RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dea
 # -----------------------------
 # AWS CLI
 # -----------------------------
-RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip" && \
+RUN curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip" && \
     unzip /tmp/awscliv2.zip -d /tmp && \
     /tmp/aws/install && \
     rm -rf /tmp/aws /tmp/awscliv2.zip
@@ -121,7 +129,7 @@ RUN pipx install ansible-core ansible-lint
 # -----------------------------
 # kubectl (Kubernetes client)
 # -----------------------------
-RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
+RUN curl -fLO "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
     && install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl \
     && rm kubectl
 
