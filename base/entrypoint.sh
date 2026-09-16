@@ -6,6 +6,48 @@ log() {
     echo "[entrypoint] $*"
 }
 
+# Error-level log line, routed to stderr so it stands out from the normal
+# lifecycle output in `docker logs` and is easy to grep for.
+log_err() {
+    echo "[entrypoint] ERROR: $*" >&2
+}
+
+# Re-emits an external tool's captured output as clearly-marked entrypoint
+# lines, so the tool's own explanation of a failure (an expired token, a
+# rejected key, an unreachable host) is never swallowed. Each line is prefixed
+# and indented so it reads as the tool speaking, not the entrypoint.
+log_tool_output() {
+    local output="$1"
+    if [[ -z "$output" ]]; then
+        log_err "  (the tool produced no output)"
+        return
+    fi
+    local line
+    while IFS= read -r line; do
+        log_err "  | $line"
+    done <<<"$output"
+}
+
+# Runs an external command with stdout+stderr captured. On success the output
+# is discarded to keep the log readable and 0 is returned. On failure the
+# tool's own output is logged under a clear ERROR line and the tool's exit
+# status is returned — which, since callers run it unguarded under
+# `set -euo pipefail`, aborts container start rather than letting it come up
+# with a silently broken integration. Not for pipelines (it feeds no stdin);
+# capture those inline instead (see github_login / docker_login).
+run_step() {
+    local description="$1"
+    shift
+    local output status=0
+    output=$("$@" 2>&1) || status=$?
+    if [[ "$status" -ne 0 ]]; then
+        log_err "${description} failed (exit ${status}). Tool output:"
+        log_tool_output "$output"
+        return "$status"
+    fi
+    return 0
+}
+
 # Polls `docker info` for up to 30s. Shared by docker_login() (waiting on
 # whatever daemon DOCKER_HOST already points at) and docker_daemon_setup()
 # (waiting on the embedded daemon it just started).
@@ -32,11 +74,35 @@ github_login() {
 
     export GITHUB_TOKEN="$token"
 
-    if gh auth status --hostname github.com >/dev/null 2>&1; then
+    # `gh auth status` does a live API call against the token gh is using
+    # (the exported GITHUB_TOKEN), so it is the authoritative validity check —
+    # an expired or revoked token fails here. Capture its output so the reason
+    # is available rather than discarded to /dev/null.
+    local status_output status=0
+    status_output=$(gh auth status --hostname github.com 2>&1) || status=$?
+    if [[ "$status" -eq 0 ]]; then
         log "GitHub CLI is already authenticated for github.com."
-    else
-        log "Authenticating GitHub CLI for github.com..."
-        printf '%s' "$token" | gh auth login --hostname github.com --with-token
+        return
+    fi
+
+    log "GitHub CLI not yet authenticated for github.com; logging in with the provided token..."
+    local login_output login_status=0
+    login_output=$(printf '%s' "$token" | gh auth login --hostname github.com --with-token 2>&1) || login_status=$?
+    if [[ "$login_status" -ne 0 ]]; then
+        log_err "GitHub CLI login failed for github.com (exit ${login_status}). Tool output:"
+        log_tool_output "$login_output"
+        return "$login_status"
+    fi
+
+    # Re-check after login: `gh auth login --with-token` can accept and store a
+    # token without proving it is usable, so verify explicitly. This is what
+    # turns a silent expired-token failure into a clear, actionable log line.
+    local verify_output verify_status=0
+    verify_output=$(gh auth status --hostname github.com 2>&1) || verify_status=$?
+    if [[ "$verify_status" -ne 0 ]]; then
+        log_err "GitHub token was stored but is not usable for github.com (exit ${verify_status}); it is likely expired or lacks the required scopes. Tool output:"
+        log_tool_output "$verify_output"
+        return "$verify_status"
     fi
 
     log "GitHub CLI authentication ready for github.com."
@@ -192,7 +258,8 @@ claude_setup() {
         name=$(jq -r ".claude.http_mcps[$i].name" "$config_file")
         url=$(jq -r ".claude.http_mcps[$i].url" "$config_file")
         log "Adding Claude HTTP MCP: $name -> $url"
-        claude mcp add --scope user --transport http "$name" "$url"
+        run_step "Adding Claude HTTP MCP '$name'" \
+            claude mcp add --scope user --transport http "$name" "$url"
     done
 
     # stdio mcps
@@ -204,7 +271,8 @@ claude_setup() {
         command=$(jq -r ".claude.stdio_mcps[$i].command" "$config_file")
         read -ra command_args <<<"$command"
         log "Adding Claude stdio MCP: $name"
-        claude mcp add --scope user --transport stdio "$name" -- "${command_args[@]}"
+        run_step "Adding Claude stdio MCP '$name'" \
+            claude mcp add --scope user --transport stdio "$name" -- "${command_args[@]}"
     done
 
     # plugins
@@ -214,8 +282,10 @@ claude_setup() {
         marketplace_id=$(jq -r ".claude.plugins[$i].marketplace_id" "$config_file")
         plugin_id=$(jq -r ".claude.plugins[$i].plugin_id" "$config_file")
         log "Installing Claude plugin: $plugin_id from $marketplace_id"
-        claude plugin marketplace add --scope user "$marketplace_id"
-        claude plugin install --scope user "$plugin_id"
+        run_step "Adding Claude plugin marketplace '$marketplace_id'" \
+            claude plugin marketplace add --scope user "$marketplace_id"
+        run_step "Installing Claude plugin '$plugin_id'" \
+            claude plugin install --scope user "$plugin_id"
     done
 
     log "Claude setup completed."
@@ -250,7 +320,8 @@ copilot_setup() {
         name=$(jq -r ".copilot.http_mcps[$i].name" "$config_file")
         url=$(jq -r ".copilot.http_mcps[$i].url" "$config_file")
         log "Adding Copilot HTTP MCP: $name -> $url"
-        copilot mcp add --transport http "$name" "$url"
+        run_step "Adding Copilot HTTP MCP '$name'" \
+            copilot mcp add --transport http "$name" "$url"
     done
 
     # stdio mcps
@@ -262,7 +333,8 @@ copilot_setup() {
         command=$(jq -r ".copilot.stdio_mcps[$i].command" "$config_file")
         read -ra command_args <<<"$command"
         log "Adding Copilot stdio MCP: $name"
-        copilot mcp add --transport stdio "$name" -- "${command_args[@]}"
+        run_step "Adding Copilot stdio MCP '$name'" \
+            copilot mcp add --transport stdio "$name" -- "${command_args[@]}"
     done
 
     # plugins
@@ -272,8 +344,10 @@ copilot_setup() {
         marketplace_id=$(jq -r ".copilot.plugins[$i].marketplace_id" "$config_file")
         plugin_id=$(jq -r ".copilot.plugins[$i].plugin_id" "$config_file")
         log "Installing Copilot plugin: $plugin_id from $marketplace_id"
-        copilot plugin marketplace add "$marketplace_id"
-        copilot plugin install "${plugin_id}@${marketplace_id}"
+        run_step "Adding Copilot plugin marketplace '$marketplace_id'" \
+            copilot plugin marketplace add "$marketplace_id"
+        run_step "Installing Copilot plugin '${plugin_id}@${marketplace_id}'" \
+            copilot plugin install "${plugin_id}@${marketplace_id}"
     done
 
     log "Copilot setup completed."
@@ -430,15 +504,28 @@ docker_login() {
 
     log "Waiting for the Docker daemon to be reachable..."
     if ! wait_for_docker; then
-        log "Skipping Docker registry login: Docker daemon is not reachable."
+        # Surface why the daemon is unreachable (permission denied, no such
+        # host, ...) instead of just reporting the timeout. This stays a skip
+        # rather than a hard failure: an unreachable daemon is usually an
+        # environment/timing issue, not a bad credential.
+        local info_output
+        info_output=$(docker info 2>&1 || true)
+        log_err "Skipping Docker registry login: Docker daemon is not reachable. Last 'docker info' output:"
+        log_tool_output "$info_output"
         return
     fi
 
     log "Logging in to Docker registry${registry:+ $registry}..."
+    local login_output login_status=0
     if [[ -n "$registry" ]]; then
-        printf '%s' "$password" | docker login --username "$user" --password-stdin "$registry"
+        login_output=$(printf '%s' "$password" | docker login --username "$user" --password-stdin "$registry" 2>&1) || login_status=$?
     else
-        printf '%s' "$password" | docker login --username "$user" --password-stdin
+        login_output=$(printf '%s' "$password" | docker login --username "$user" --password-stdin 2>&1) || login_status=$?
+    fi
+    if [[ "$login_status" -ne 0 ]]; then
+        log_err "Docker registry login failed (exit ${login_status}). Tool output:"
+        log_tool_output "$login_output"
+        return "$login_status"
     fi
     log "Docker registry login completed."
 }
@@ -459,14 +546,22 @@ gcloud_setup() {
     fi
 
     log "Configuring Google Cloud service account credentials..."
-    printf '%s' "$key_b64" | base64 -d > "$key_file"
+    local decode_output decode_status=0
+    decode_output=$(printf '%s' "$key_b64" | base64 -d > "$key_file" 2>&1) || decode_status=$?
+    if [[ "$decode_status" -ne 0 ]]; then
+        log_err "Failed to base64-decode GCLOUD_SERVICE_ACCOUNT_KEY_B64 (exit ${decode_status}). Tool output:"
+        log_tool_output "$decode_output"
+        return "$decode_status"
+    fi
     chmod 600 "$key_file"
     export GOOGLE_APPLICATION_CREDENTIALS="$key_file"
 
-    gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
+    run_step "Google Cloud service-account activation" \
+        gcloud auth activate-service-account --key-file="$GOOGLE_APPLICATION_CREDENTIALS"
 
     if [[ -n "$project_id" ]]; then
-        gcloud config set project "$project_id"
+        run_step "Google Cloud project selection ($project_id)" \
+            gcloud config set project "$project_id"
     fi
 
     log "Google Cloud setup completed."
@@ -492,15 +587,19 @@ aws_setup() {
     log "Configuring AWS CLI credentials..."
     mkdir -p /root/.aws
 
-    aws configure set aws_access_key_id "$access_key_id" --profile "$profile"
-    aws configure set aws_secret_access_key "$secret_access_key" --profile "$profile"
+    run_step "AWS access key configuration (profile $profile)" \
+        aws configure set aws_access_key_id "$access_key_id" --profile "$profile"
+    run_step "AWS secret key configuration (profile $profile)" \
+        aws configure set aws_secret_access_key "$secret_access_key" --profile "$profile"
 
     if [[ -n "$session_token" ]]; then
-        aws configure set aws_session_token "$session_token" --profile "$profile"
+        run_step "AWS session token configuration (profile $profile)" \
+            aws configure set aws_session_token "$session_token" --profile "$profile"
     fi
 
     if [[ -n "$region" ]]; then
-        aws configure set region "$region" --profile "$profile"
+        run_step "AWS region configuration (profile $profile)" \
+            aws configure set region "$region" --profile "$profile"
     fi
 
     export AWS_PROFILE="$profile"
@@ -532,10 +631,19 @@ custom_scripts_setup() {
     local script
     while IFS= read -r -d '' script; do
         log "Running custom script: $script"
+        # Custom scripts stream their own output live (not captured), so their
+        # logging is preserved as-is. Failure is still made unmistakable: name
+        # the failing script and its exit status, then abort so a broken
+        # bootstrap script does not pass unnoticed.
+        local script_status=0
         if [[ -x "$script" ]]; then
-            "$script"
+            "$script" || script_status=$?
         else
-            bash "$script"
+            bash "$script" || script_status=$?
+        fi
+        if [[ "$script_status" -ne 0 ]]; then
+            log_err "Custom script failed: $script (exit ${script_status})."
+            return "$script_status"
         fi
     done < <(find "$dir" -maxdepth 1 -type f -name '*.sh' -print0 | sort -z)
 }
