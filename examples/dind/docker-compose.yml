@@ -1,9 +1,10 @@
-# Example Compose setup for the `base` development image: a Docker-in-Docker
-# daemon as the container's Docker host, plus MongoDB and PostgreSQL
-# instances to exercise the bundled `mongosh`/`psql` clients against. Run
-# from this directory with your own `.env`, `setup.json` and `entrypoint/`
-# files copied alongside this file (see ../README.md for the templates to
-# copy from).
+# Example Compose setup for the `base` development image using a separate
+# Docker-in-Docker daemon as the container's Docker host, plus MongoDB and
+# PostgreSQL instances to exercise the bundled `mongosh`/`psql` clients
+# against. See ../embedded/ for the alternative that runs the daemon inside
+# the dev container itself, and ../README.md for how the two compare.
+#
+# Run from this directory: `docker compose up -d && docker compose exec dev bash`.
 
 services:
   dev:
@@ -12,7 +13,7 @@ services:
       - .env
     volumes:
       - ./setup.json:/entrypoint/setup.json:ro
-      - ./entrypoint:/entrypoint/files:ro
+      - ../entrypoint:/entrypoint/files:ro
 
   # Example Docker-in-Docker daemon the dev container can build/run images
   # against without mounting the host's Docker socket. Reachable from the

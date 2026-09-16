@@ -11,6 +11,7 @@ WORKDIR /root
 RUN apt update && apt upgrade -y && apt install -y --no-install-recommends \
     apt-transport-https \
     bash \
+    bash-completion \
     ca-certificates \
     curl \
     dnsutils \
@@ -85,7 +86,7 @@ ENV PATH="/root/.local/bin:/root/go/bin:/usr/local/go/bin:${PATH}"
 RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg \
      && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
          > /etc/apt/sources.list.d/docker.list \
-     && apt update && apt install -y docker-ce-cli
+     && apt update && apt install -y docker-ce-cli docker-ce containerd.io
 
 # -----------------------------
 # Terraform CLI
@@ -178,6 +179,78 @@ RUN curl -fsSL https://gh.io/copilot-install | bash
 # Claude CLI
 # -----------------------------
 RUN curl -fsSL https://claude.ai/install.sh | bash
+
+# -----------------------------
+# opencode CLI
+# -----------------------------
+# The opencode installer always places the binary at ~/.opencode/bin (no env
+# var override exists) and otherwise relies on editing shell rc files to add
+# that directory to PATH - which has no effect in a non-interactive RUN. Link
+# it into /root/.local/bin instead, the same already-on-PATH directory the
+# Claude CLI installer uses.
+RUN curl -fsSL https://opencode.ai/install | bash \
+    && ln -s /root/.opencode/bin/opencode /root/.local/bin/opencode
+
+# -----------------------------
+# Bash completions
+# -----------------------------
+# Ubuntu ships per-tool completions under /usr/share/bash-completion/completions
+# but the bash-completion package that loads them is not pulled in, because the
+# essential-tools install above uses --no-install-recommends; it is now listed
+# there explicitly. Root's stock .bashrc also has its completion block commented
+# out, and `docker exec -it <container> bash` is a non-login interactive shell,
+# so /etc/profile.d is never read - the loader has to be sourced from .bashrc.
+#
+# Completions for the bundled CLIs are generated here at build time rather than
+# regenerated on every shell start, so opening a shell stays fast. Each one is
+# best-effort: a CLI that changes or drops its completion subcommand must not
+# break the image build. Empty output is deleted afterwards so a failed
+# generation shows up as a missing completion, not a sourced no-op.
+#
+# Nothing is written over an existing entry. Some packages already register
+# completions here, and google-cloud-cli's entry is a *symlink* to the SDK's
+# real script - writing through it replaces that script with a line that
+# sources itself, which sends every interactive bash into infinite recursion
+# until it segfaults. gcloud, git and psql already ship working completions,
+# so they are simply left alone. claude has no completion subcommand.
+RUN printf '%s\n' \
+        '' \
+        '# Load the bash-completion framework (root'"'"'s stock .bashrc leaves this off).' \
+        'if ! shopt -oq posix; then' \
+        '    [ -r /usr/share/bash-completion/bash_completion ] && . /usr/share/bash-completion/bash_completion' \
+        'fi' \
+        >> /root/.bashrc \
+    && mkdir -p /etc/bash_completion.d \
+    && write_completion() { \
+           local name="$1"; shift; \
+           [ -e "/etc/bash_completion.d/${name}" ] && return 0; \
+           "$@" > "/etc/bash_completion.d/${name}" 2>/dev/null || true; \
+       }; \
+       write_completion docker   docker completion bash; \
+       write_completion kubectl  kubectl completion bash; \
+       write_completion gh       gh completion -s bash; \
+       write_completion npm      npm completion; \
+       write_completion act      act completion bash; \
+       write_completion opencode opencode completion bash; \
+       write_completion copilot  copilot completion bash; \
+       [ -e /etc/bash_completion.d/terraform ] || printf 'complete -C /usr/bin/terraform terraform\n' > /etc/bash_completion.d/terraform; \
+       [ -e /etc/bash_completion.d/aws ] || printf 'complete -C aws_completer aws\n' > /etc/bash_completion.d/aws; \
+       find /etc/bash_completion.d -maxdepth 1 -type f -empty -delete
+
+# -----------------------------
+# Supervisor (for the embedded Docker daemon)
+# -----------------------------
+# Installs and configures supervisor to run dockerd, but does not launch
+# supervisord itself here - entrypoint.sh decides whether to start it, gated
+# by setup.json's docker.enabled opt-in. No new apt repo is needed:
+# supervisor is in Ubuntu 24.04's universe repo, already reachable from the
+# apt update at the top of this file. Ubuntu's supervisor package ships a
+# default /etc/supervisor/supervisord.conf that already includes every
+# *.conf file under /etc/supervisor/conf.d/, so supervisord.conf here is a
+# conf.d fragment containing only the [program:dockerd] stanza.
+RUN apt install -y supervisor \
+    && mkdir -p /var/log/supervisor
+COPY supervisord.conf /etc/supervisor/conf.d/dockerd.conf
 
 # -----------------------------
 # Clean up
