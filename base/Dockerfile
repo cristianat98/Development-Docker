@@ -66,10 +66,7 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 # -----------------------------
 # C toolchain (gcc)
 # -----------------------------
-# Required for cgo builds and Go's race detector (`go test -race`); the Go
-# install alone does not provide a C compiler. Recommends are kept so gcc pulls
-# the libc headers cgo needs.
-RUN apt update && apt install -y gcc
+RUN apt install -y gcc
 
 # -----------------------------
 # Java
