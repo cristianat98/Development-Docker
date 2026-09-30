@@ -87,12 +87,27 @@ sections, empty arrays and absent keys are silently skipped.
     against the files directory; `host` is written as a `Host` block in
     `~/.ssh/config`.
 
+- **`setup.run`** — `"once"` (the default) or `"always"`. With `"once"`, setup
+  runs on the first start of a container and a restart skips it. With
+  `"always"`, setup runs on every start, so after changing `setup.json`, the
+  mounted files or the custom scripts, a `docker restart` applies the change
+  without recreating the container. Every built-in step is safe to repeat:
+  - MCP servers already configured with the same URL or command are skipped;
+    one whose URL or command changed is removed and re-added.
+  - Plugins and marketplaces that are already there are skipped.
+  - `global_md` replaces the installed file only while it is still the copy the
+    entrypoint made (tracked by a `.entrypoint-<file>.sha256` next to it). A
+    file changed since, by a sync command, `rtk init` or by hand, is kept.
+
+  Custom scripts must be safe to repeat too: check for what they create
+  (a cloned repo, an installed CLI, a registered MCP server) before creating it.
+
 - **`scripts.dir`** — resolved against the files directory. Every `*.sh` file
   directly inside it runs at container start, in sorted filename order
   (prefix with `00-`, `01-`, … to control ordering). Executable files run
-  directly; non-executable files run via `bash`. Runs before the Claude/Copilot
-  setup below, so a script here can install CLIs (e.g. `rtk`,
-  `notebooklm-mcp-cli`) that those steps detect and configure automatically.
+  directly; non-executable files run via `bash`. Runs after all the built-in
+  steps, as the last part of setup, and a script that exits non-zero stops the
+  container from starting.
 
 - **`docker.enabled`** — opt-in flag for the embedded Docker daemon.
   Defaults to `false` (or is skipped entirely if `setup.json` is absent),
@@ -134,7 +149,8 @@ sections, empty arrays and absent keys are silently skipped.
 By default the entrypoint looks for the config at `/entrypoint/setup.json` and
 the files directory at `/entrypoint/files`; override these with the
 `SETUP_CONFIG` / `SETUP_FILES_DIR` environment variables if you mount them
-elsewhere.
+elsewhere. Set `ENTRYPOINT_LOG_LEVEL=debug` to log why each step was skipped
+or re-applied.
 
 ## Run
 
@@ -294,23 +310,21 @@ daemon and waits for it to become reachable — see "Docker-in-Docker: sidecar
 vs. embedded daemon" above. This runs first so the daemon is already up by
 the time step 7 below tries to log in to it.
 
-On every start, `entrypoint.sh` then runs through the following steps, each
-skipped gracefully when its prerequisites (env vars, `setup.json` keys,
-installed CLIs) are missing, before finally `exec`ing the container's `CMD`:
+`entrypoint.sh` then runs through the following steps, each skipped gracefully
+when its prerequisites (env vars, `setup.json` keys, installed CLIs) are
+missing, before finally `exec`ing the container's `CMD`. They run on the first
+start of a container, and on every start when `setup.run` is `"always"`; a
+`/root/.entrypoint_initialized` marker records that the first run finished.
 
 1. **GitHub CLI login** — authenticates `gh` using `GITHUB_TOKEN`
 2. **Git setup** — sets `user.name`/`user.email`, imports a passphrase-less GPG
    signing key and configures commit signing, and installs SSH keys/host blocks
    from `setup.json`
-3. **Custom scripts** — runs every `*.sh` file in the directory pointed to by
-   `scripts.dir` in `setup.json`, in sorted filename order. Runs before the
-   Claude/Copilot setup below, so a script here can install CLIs (e.g. RTK,
-   NotebookLM CLI) that those steps detect and configure
-4. **Claude CLI setup** — installs the global `CLAUDE.md`, skill directories,
-   HTTP/stdio MCP servers and plugins from `setup.json`; also initialises RTK
-   (if `rtk` is on `PATH`), configures NotebookLM (if its CLI is installed)
-   and registers the Context7 MCP server (if `CONTEXT7_API_KEY` is set)
-5. **Copilot CLI setup** — same categories as Claude, adapted for `copilot`
+3. **Claude CLI setup** — installs the global `CLAUDE.md`, skill directories,
+   HTTP/stdio MCP servers and plugins from `setup.json`
+4. **Copilot CLI setup** — same categories as Claude, adapted for `copilot`
+5. **opencode setup** — installs `AGENTS.md` and skills, and merges MCP servers
+   and plugins into `opencode.json`
 6. **Bitbucket CLI** — writes `~/.bitbucket-rest-cli-config.json` (`auth.username`/`auth.appPassword`) from `BITBUCKET_USER`/`BITBUCKET_PASSWORD`
 7. **Docker registry login** — waits for the Docker daemon, then logs in with
    `DOCKER_USERNAME`/`DOCKER_PASSWORD` (optionally against `DOCKER_REGISTRY`)
@@ -318,6 +332,9 @@ installed CLIs) are missing, before finally `exec`ing the container's `CMD`:
    the service account and optionally selects `GCLOUD_PROJECT_ID`
 9. **AWS CLI setup** — configures a named profile from `AWS_ACCESS_KEY_ID` /
    `AWS_SECRET_ACCESS_KEY` (and optional session token / region)
+10. **Custom scripts** — runs every `*.sh` file in the directory pointed to by
+    `scripts.dir` in `setup.json`, in sorted filename order. They run last, so
+    they can adjust what the steps above set up
 
 ## Manual post-setup
 
