@@ -8,7 +8,7 @@ container start — so you can `docker exec` straight into a ready-to-work shell
 ## What's included
 
 - **Core tools**: curl, wget, git, jq, htop, nmap, tcpdump, openssh-client, sudo, etc.
-- **Languages/runtimes**: Python 3 + Python 3.14, Node.js LTS (via nvm), Go 1.27.1, OpenJDK 21, Rust stable (via rustup, with clippy and rustfmt), C/C++ (gcc, g++, make, cmake, gdb, pkg-config, libssl-dev)
+- **Languages/runtimes**: Python 3 + Python 3.14 (both with `-dev` headers), Node.js LTS (via nvm), Go 1.27.1, OpenJDK 21 + Maven, Rust stable (via rustup, with clippy and rustfmt), C/C++ (gcc, g++, make, cmake, gdb, pkg-config, libssl-dev)
 - **Cloud & infrastructure CLIs**: Docker CLI, Terraform + tflint, Google Cloud SDK, AWS CLI, kubectl, Ansible
 - **VCS & collaboration**: Git (latest via PPA), GitHub CLI (`gh`), Bitbucket CLI (`bb`), pre-commit + go-pre-commit
 - **Databases**: MongoDB Shell (`mongosh`), PostgreSQL client (`psql`)
@@ -356,7 +356,7 @@ Once inside the container, confirm the toolchain is in place:
 python3 --version && pip3 --version && python3.14 --version
 node --version && npm --version
 go version
-java -version && javac -version
+java -version && javac -version && mvn --version
 rustc --version && cargo --version && cargo clippy --version && rustfmt --version
 gcc --version && g++ --version && make --version && cmake --version && gdb --version
 git --version

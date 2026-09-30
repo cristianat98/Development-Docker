@@ -42,7 +42,9 @@ RUN apt update && apt upgrade -y && apt install -y --no-install-recommends \
 # -----------------------------
 # Python
 # -----------------------------
-RUN add-apt-repository ppa:deadsnakes/ppa -y && apt update && apt install -y python3.14
+# The -dev packages provide Python.h, which pip needs to build packages with C
+# extensions, for the system Python and for 3.14.
+RUN add-apt-repository ppa:deadsnakes/ppa -y && apt update && apt install -y python3.14 python3.14-dev python3-dev
 
 # -----------------------------
 # Node.JS and npm
@@ -85,9 +87,9 @@ RUN curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 # -----------------------------
-# Java
+# Java (JDK 21 + Maven)
 # -----------------------------
-RUN apt install -y openjdk-21-jdk
+RUN apt install -y openjdk-21-jdk maven
 
 # -----------------------------
 # Git
