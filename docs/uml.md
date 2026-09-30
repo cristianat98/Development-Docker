@@ -7,6 +7,7 @@ classDiagram
     direction LR
 
     class Dockerfile["base/Dockerfile"] {
+        languages: Python, Node, Go, Java, Rust, C/C++
         CLIs: claude, copilot, opencode, gh, gcloud, aws, terraform, ...
         dockerd + supervisord
         ENTRYPOINT docker-entrypoint.sh

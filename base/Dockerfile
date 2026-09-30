@@ -60,13 +60,29 @@ RUN curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh |
 # -----------------------------
 # Golang
 # -----------------------------
-RUN curl -fsSL https://go.dev/dl/go1.21.5.linux-amd64.tar.gz | tar -C /usr/local -xzvf -
+RUN curl -fsSL https://go.dev/dl/go1.27.1.linux-amd64.tar.gz | tar -C /usr/local -xzf -
 ENV PATH="/usr/local/go/bin:${PATH}"
 
 # -----------------------------
-# C toolchain (gcc)
+# C/C++ toolchain
 # -----------------------------
-RUN apt install -y gcc
+# build-essential brings gcc, g++, make and the libc headers. pkg-config and
+# libssl-dev are what native Python and Rust builds (e.g. openssl-sys) most
+# often look for.
+RUN apt install -y build-essential pkg-config cmake gdb libssl-dev
+
+# -----------------------------
+# Rust (rustup, stable toolchain)
+# -----------------------------
+# The minimal profile skips the offline docs; clippy and rustfmt are added
+# back explicitly. Linking uses the gcc installed above.
+ENV RUSTUP_HOME=/root/.rustup CARGO_HOME=/root/.cargo
+RUN curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
+        | sh -s -- -y --no-modify-path --profile minimal --default-toolchain stable \
+            --component clippy --component rustfmt \
+    && /root/.cargo/bin/rustc --version \
+    && /root/.cargo/bin/cargo --version
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 # -----------------------------
 # Java
