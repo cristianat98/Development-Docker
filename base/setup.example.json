@@ -11,6 +11,9 @@
       }
     ]
   },
+  "setup": {
+    "run": "once"
+  },
   "scripts": {
     "dir": "scripts"
   },

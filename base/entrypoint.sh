@@ -6,6 +6,14 @@ log() {
     echo "[entrypoint] $*"
 }
 
+# Debug-level log line, only emitted when ENTRYPOINT_LOG_LEVEL=debug. Used for
+# the decisions that make a re-run cheap (what was found, why it was skipped).
+log_debug() {
+    if [[ "${ENTRYPOINT_LOG_LEVEL:-info}" == "debug" ]]; then
+        echo "[entrypoint] DEBUG: $*"
+    fi
+}
+
 # Error-level log line, routed to stderr so it stands out from the normal
 # lifecycle output in `docker logs` and is easy to grep for.
 log_err() {
@@ -215,6 +223,88 @@ install_skills() {
     done
 }
 
+# Installs a global instructions file (CLAUDE.md / AGENTS.md) from $1 to $2,
+# without clobbering a file something else has taken over since. The sha256 of
+# every copy the entrypoint makes is recorded next to the target; the target is
+# only replaced while it still matches that record, i.e. nobody (a sync command,
+# `rtk init`, the user) has edited it since. A target with no record is left
+# alone too, so containers set up by an older image keep their file.
+install_global_md() {
+    local agent="$1" src="$2" dest="$3"
+    local record="${dest%/*}/.entrypoint-$(basename "$dest").sha256"
+
+    if [[ ! -f "$src" ]]; then
+        log "Skipping $agent global MD: $src not found."
+        return
+    fi
+
+    mkdir -p "$(dirname "$dest")"
+    if [[ -f "$dest" ]]; then
+        local current recorded
+        current=$(sha256sum "$dest" | cut -d' ' -f1)
+        recorded=$(cat "$record" 2>/dev/null || true)
+        log_debug "$agent global MD: current=$current recorded=${recorded:-none}"
+        if [[ "$current" != "$recorded" ]]; then
+            log "Keeping $agent global MD $dest: it was modified after the entrypoint installed it."
+            return
+        fi
+        if cmp -s "$src" "$dest"; then
+            log "$agent global MD $dest is up to date."
+            return
+        fi
+    fi
+
+    cp "$src" "$dest"
+    sha256sum "$dest" | cut -d' ' -f1 >"$record"
+    log "$agent global MD installed from $src."
+}
+
+# Reports how the MCP server $2 in the JSON config $1 compares to the wanted
+# fields $3 (a JSON object, e.g. {"url": ...} or {"command": ..., "args": [...]}).
+# Prints "missing", "same" or "changed". Only the wanted fields are compared,
+# so tool-specific extras (Copilot's "tools", Claude's "env") don't count.
+mcp_state() {
+    local file="$1" name="$2" want="$3"
+    if [[ ! -f "$file" ]] || ! jq -e --arg name "$name" '.mcpServers[$name] != null' "$file" >/dev/null 2>&1; then
+        echo missing
+    elif jq -e --arg name "$name" --argjson want "$want" \
+        '.mcpServers[$name] as $have | $want | to_entries | all($have[.key] == .value)' "$file" >/dev/null 2>&1; then
+        echo same
+    else
+        echo changed
+    fi
+}
+
+# Prints the fields a stdio MCP server is stored with: the first word of its
+# command line as "command" and the rest as "args".
+stdio_mcp_fields() {
+    jq -nc --args '{command: $ARGS.positional[0], args: $ARGS.positional[1:]}' -- "$@"
+}
+
+# Adds MCP server $3 for agent $1 unless it is already configured the same way.
+# $2 is the agent's config file, $4 the wanted fields (see mcp_state), $5 the
+# remove command, and the remaining args the add command. A changed server is
+# removed and re-added, so edits to setup.json apply on the next run.
+ensure_mcp() {
+    local agent="$1" file="$2" name="$3" want="$4" remove_cmd="$5"
+    shift 5
+    local state
+    state=$(mcp_state "$file" "$name" "$want")
+    log_debug "$agent MCP '$name': $state (wanted $want)"
+    case "$state" in
+    same)
+        log "$agent MCP '$name' already configured, skipping."
+        return
+        ;;
+    changed)
+        log "$agent MCP '$name' changed in setup.json, re-adding."
+        # shellcheck disable=SC2086
+        run_step "Removing $agent MCP '$name'" $remove_cmd "$name"
+        ;;
+    esac
+    run_step "Adding $agent MCP '$name'" "$@"
+}
+
 claude_setup() {
     local config_file="${SETUP_CONFIG:-/entrypoint/setup.json}"
     local files_dir="${SETUP_FILES_DIR:-/entrypoint/files}"
@@ -233,14 +323,7 @@ claude_setup() {
     local global_md
     global_md=$(jq -r '.claude.global_md // empty' "$config_file")
     if [[ -n "$global_md" ]]; then
-        local src="${files_dir}/${global_md}"
-        if [[ -f "$src" ]]; then
-            mkdir -p /root/.claude
-            cp "$src" /root/.claude/CLAUDE.md
-            log "Claude CLAUDE.md installed from $src."
-        else
-            log "Skipping Claude global MD: $src not found."
-        fi
+        install_global_md "Claude" "${files_dir}/${global_md}" /root/.claude/CLAUDE.md
     fi
 
     # skills
@@ -258,7 +341,8 @@ claude_setup() {
         name=$(jq -r ".claude.http_mcps[$i].name" "$config_file")
         url=$(jq -r ".claude.http_mcps[$i].url" "$config_file")
         log "Adding Claude HTTP MCP: $name -> $url"
-        run_step "Adding Claude HTTP MCP '$name'" \
+        ensure_mcp "Claude" /root/.claude.json "$name" "$(jq -nc --arg url "$url" '{url: $url}')" \
+            "claude mcp remove --scope user" \
             claude mcp add --scope user --transport http "$name" "$url"
     done
 
@@ -271,7 +355,8 @@ claude_setup() {
         command=$(jq -r ".claude.stdio_mcps[$i].command" "$config_file")
         read -ra command_args <<<"$command"
         log "Adding Claude stdio MCP: $name"
-        run_step "Adding Claude stdio MCP '$name'" \
+        ensure_mcp "Claude" /root/.claude.json "$name" "$(stdio_mcp_fields "${command_args[@]}")" \
+            "claude mcp remove --scope user" \
             claude mcp add --scope user --transport stdio "$name" -- "${command_args[@]}"
     done
 
@@ -320,7 +405,8 @@ copilot_setup() {
         name=$(jq -r ".copilot.http_mcps[$i].name" "$config_file")
         url=$(jq -r ".copilot.http_mcps[$i].url" "$config_file")
         log "Adding Copilot HTTP MCP: $name -> $url"
-        run_step "Adding Copilot HTTP MCP '$name'" \
+        ensure_mcp "Copilot" /root/.copilot/mcp-config.json "$name" "$(jq -nc --arg url "$url" '{url: $url}')" \
+            "copilot mcp remove" \
             copilot mcp add --transport http "$name" "$url"
     done
 
@@ -333,7 +419,8 @@ copilot_setup() {
         command=$(jq -r ".copilot.stdio_mcps[$i].command" "$config_file")
         read -ra command_args <<<"$command"
         log "Adding Copilot stdio MCP: $name"
-        run_step "Adding Copilot stdio MCP '$name'" \
+        ensure_mcp "Copilot" /root/.copilot/mcp-config.json "$name" "$(stdio_mcp_fields "${command_args[@]}")" \
+            "copilot mcp remove" \
             copilot mcp add --transport stdio "$name" -- "${command_args[@]}"
     done
 
@@ -344,8 +431,15 @@ copilot_setup() {
         marketplace_id=$(jq -r ".copilot.plugins[$i].marketplace_id" "$config_file")
         plugin_id=$(jq -r ".copilot.plugins[$i].plugin_id" "$config_file")
         log "Installing Copilot plugin: $plugin_id from $marketplace_id"
-        run_step "Adding Copilot plugin marketplace '$marketplace_id'" \
-            copilot plugin marketplace add "$marketplace_id"
+        # Unlike Claude's, Copilot's `marketplace add` fails on an already
+        # registered marketplace. Its list shows sources as "GitHub: owner/repo".
+        if copilot plugin marketplace list --json 2>/dev/null |
+            jq -e --arg id "$marketplace_id" 'any(.[]; (.source | split(": ") | last) == $id)' >/dev/null; then
+            log "Copilot plugin marketplace '$marketplace_id' already registered, skipping."
+        else
+            run_step "Adding Copilot plugin marketplace '$marketplace_id'" \
+                copilot plugin marketplace add "$marketplace_id"
+        fi
         run_step "Installing Copilot plugin '${plugin_id}@${marketplace_id}'" \
             copilot plugin install "${plugin_id}@${marketplace_id}"
     done
@@ -404,13 +498,7 @@ opencode_setup() {
     local global_md
     global_md=$(jq -r '.opencode.global_md // empty' "$config_file")
     if [[ -n "$global_md" ]]; then
-        local src="${files_dir}/${global_md}"
-        if [[ -f "$src" ]]; then
-            cp "$src" /root/.config/opencode/AGENTS.md
-            log "opencode AGENTS.md installed from $src."
-        else
-            log "Skipping opencode global MD: $src not found."
-        fi
+        install_global_md "opencode" "${files_dir}/${global_md}" /root/.config/opencode/AGENTS.md
     fi
 
     # skills
@@ -715,9 +803,19 @@ docker_daemon_setup
 
 INITIALIZED_MARKER="${SETUP_INITIALIZED_MARKER:-/root/.entrypoint_initialized}"
 
-if [[ -f "$INITIALIZED_MARKER" ]]; then
+# setup.json's setup.run: "once" (default) runs the setup below only on the
+# first start of a container; "always" re-runs it on every start, so changes to
+# setup.json, the mounted files or the custom scripts apply on a plain restart.
+# Every built-in step is safe to repeat; custom scripts must be too.
+SETUP_RUN=$(jq -r '.setup.run // "once"' "${SETUP_CONFIG:-/entrypoint/setup.json}" 2>/dev/null || echo once)
+log_debug "setup.run=$SETUP_RUN, marker $INITIALIZED_MARKER $([[ -f "$INITIALIZED_MARKER" ]] && echo present || echo absent)"
+
+if [[ -f "$INITIALIZED_MARKER" && "$SETUP_RUN" != "always" ]]; then
     log "Container already initialized, skipping setup."
 else
+    if [[ -f "$INITIALIZED_MARKER" ]]; then
+        log "Container already initialized, re-running setup (setup.run is \"always\")."
+    fi
     github_login
 
     git_setup
